@@ -1,6 +1,6 @@
 [project]
 name = "thalamus-serve"
-version = "0.1.0"
+version = "0.2.0"
 description = "A Python ML model serving framework with built-in observability, caching, and GPU management"
 readme = "README.md"
 license = "Apache-2.0"
