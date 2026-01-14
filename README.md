@@ -99,6 +99,7 @@ See the [examples/](examples/) directory for complete implementations:
 - **[torch/](examples/torch/)** - PyTorch image classification model
 - **[hf_model/](examples/hf_model/)** - HuggingFace Transformers integration
 - **[sklearn/](examples/sklearn/)** - scikit-learn model serving
+- **[deploy/](examples/deploy/)** - Docker deployment with Docker Compose
 
 ## API Endpoints
 

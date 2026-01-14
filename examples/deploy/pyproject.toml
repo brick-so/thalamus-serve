@@ -1,0 +1,14 @@
+[project]
+name = "thalamus-sentiment-service"
+version = "1.0.0"
+description = "Sentiment analysis service using thalamus-serve"
+requires-python = ">=3.10"
+dependencies = [
+    "thalamus-serve>=0.1.0",
+    "transformers>=4.40.0",
+    "torch>=2.0.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
