@@ -1,5 +1,5 @@
 import time
-from typing import Callable
+from collections.abc import Callable
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import PlainTextResponse
@@ -225,7 +225,7 @@ def create_routes(ctx: RouteContext) -> APIRouter:
         except Exception as e:
             REQUESTS.labels(model=m.id, status="error").inc()
             log.exception("predict_error", model=m.id)
-            raise HTTPException(500, str(e))
+            raise HTTPException(500, str(e)) from e
 
         inference_ms = round((time.perf_counter() - start_infer) * 1000, 2)
         INFERENCE_LATENCY.labels(model=m.id).observe(inference_ms / 1000)

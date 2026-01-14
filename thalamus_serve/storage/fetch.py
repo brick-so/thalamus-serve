@@ -1,3 +1,5 @@
+"""Model weight fetching from S3, HuggingFace Hub, and HTTP sources."""
+
 import os
 import threading
 from pathlib import Path
@@ -6,7 +8,7 @@ import boto3
 import httpx
 from huggingface_hub import hf_hub_download, snapshot_download
 
-from thalamus_serve.config import HTTPWeight, HFWeight, S3Weight, WeightSource
+from thalamus_serve.config import HFWeight, HTTPWeight, S3Weight, WeightSource
 from thalamus_serve.infra.cache import WeightCache
 from thalamus_serve.observability.logging import log
 from thalamus_serve.schemas.storage import S3Ref
@@ -25,6 +27,7 @@ def _get_cache() -> WeightCache:
 
 
 def get_cache() -> WeightCache:
+    """Get the global weight cache instance."""
     return _get_cache()
 
 
@@ -35,6 +38,18 @@ def _s3_client():
 
 
 def fetch_weight(source: WeightSource) -> Path:
+    """Fetch model weights from a configured source.
+
+    This is the internal function used by the model loading system.
+    Downloads weights from S3, HuggingFace Hub, or HTTP based on
+    the source configuration in thalamus-deploy.json.
+
+    Args:
+        source: Weight source configuration (S3Weight, HFWeight, or HTTPWeight).
+
+    Returns:
+        Path to the downloaded/cached weight file or directory.
+    """
     if isinstance(source, S3Weight):
         return _fetch_s3_weight(source)
     if isinstance(source, HFWeight):
@@ -102,6 +117,19 @@ def fetch(
     cache: bool = True,
     timeout: float = 300.0,
 ) -> Path:
+    """Fetch a file from S3 or HTTP URL.
+
+    This is the general-purpose fetch function for downloading arbitrary files.
+
+    Args:
+        source: S3 URI (s3://bucket/key), HTTP URL, or S3Ref object.
+        filename: Optional filename override for the cached file.
+        cache: Whether to use the cache (default True).
+        timeout: HTTP request timeout in seconds.
+
+    Returns:
+        Path to the downloaded/cached file.
+    """
     if isinstance(source, S3Ref):
         return _fetch_s3(source, filename, cache)
     if source.startswith("s3://"):
@@ -156,6 +184,15 @@ def _fetch_http(url: str, use_cache: bool, timeout: float) -> Path:
 
 
 def upload_s3(local: Path | str, dest: str | S3Ref) -> S3Ref:
+    """Upload a file to S3.
+
+    Args:
+        local: Path to local file.
+        dest: S3 URI (s3://bucket/key) or S3Ref object.
+
+    Returns:
+        S3Ref pointing to the uploaded file.
+    """
     ref = dest if isinstance(dest, S3Ref) else S3Ref.from_uri(dest)
     log.info("uploading", dest=ref.uri)
     _s3_client().upload_file(str(local), ref.bucket, ref.key)
@@ -164,6 +201,14 @@ def upload_s3(local: Path | str, dest: str | S3Ref) -> S3Ref:
 
 
 def exists_s3(ref: str | S3Ref) -> bool:
+    """Check if an object exists in S3.
+
+    Args:
+        ref: S3 URI (s3://bucket/key) or S3Ref object.
+
+    Returns:
+        True if the object exists, False otherwise.
+    """
     if isinstance(ref, str):
         ref = S3Ref.from_uri(ref)
     try:

@@ -1,3 +1,5 @@
+"""Common schema types for ML model inputs and outputs."""
+
 import base64
 from typing import Annotated
 
@@ -5,6 +7,11 @@ from pydantic import BaseModel, Field, field_validator
 
 
 class Base64Data(BaseModel):
+    """Base64-encoded binary data with media type.
+
+    Useful for sending images or other binary data in JSON requests.
+    """
+
     data: str
     media_type: str = "application/octet-stream"
 
@@ -13,8 +20,8 @@ class Base64Data(BaseModel):
     def validate_base64(cls, v: str) -> str:
         try:
             base64.b64decode(v)
-        except Exception:
-            raise ValueError("Invalid base64")
+        except Exception as e:
+            raise ValueError("Invalid base64") from e
         return v
 
     def decode(self) -> bytes:
@@ -22,6 +29,8 @@ class Base64Data(BaseModel):
 
 
 class BBox(BaseModel):
+    """Bounding box with (x1, y1) as top-left and (x2, y2) as bottom-right."""
+
     x1: float
     y1: float
     x2: float
@@ -51,19 +60,26 @@ class BBox(BaseModel):
 
 
 class Label(BaseModel):
+    """Classification label with confidence score."""
+
     name: str
     confidence: float = Field(..., ge=0, le=1)
 
 
 class Vector(BaseModel):
+    """Embedding vector with float values."""
+
     values: list[float] = Field(..., min_length=1)
 
     @property
     def dim(self) -> int:
+        """Dimensionality of the vector."""
         return len(self.values)
 
 
 class Span(BaseModel):
+    """Text span with character offsets, optional label and score."""
+
     text: str
     start: int = Field(..., ge=0)
     end: int = Field(..., ge=0)
@@ -72,3 +88,4 @@ class Span(BaseModel):
 
 
 Prob = Annotated[float, Field(ge=0, le=1)]
+"""Probability value constrained to [0, 1]."""

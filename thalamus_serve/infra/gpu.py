@@ -1,3 +1,5 @@
+"""GPU detection, memory management, and device allocation utilities."""
+
 from enum import Enum
 from threading import Lock
 from typing import Any
@@ -6,12 +8,15 @@ from pydantic import BaseModel
 
 
 class DeviceType(Enum):
+    """Supported compute device types."""
     CPU = "cpu"
     CUDA = "cuda"
     MPS = "mps"
 
 
 class DeviceInfo(BaseModel, frozen=True):
+    """Information about a single compute device."""
+
     device_type: DeviceType
     device_index: int
     name: str
@@ -19,6 +24,8 @@ class DeviceInfo(BaseModel, frozen=True):
 
 
 class GPUStatus(BaseModel, frozen=True):
+    """Status of available GPU/accelerator devices."""
+
     available: bool
     device_count: int
     devices: tuple[DeviceInfo, ...]
@@ -35,6 +42,12 @@ def _get_torch() -> Any | None:
 
 
 def detect_devices() -> GPUStatus:
+    """Detect available GPU/accelerator devices.
+
+    Returns:
+        GPUStatus containing information about available CUDA or MPS devices.
+        If PyTorch is not installed, returns status with available=False.
+    """
     torch = _get_torch()
     if torch is None:
         return GPUStatus(
@@ -79,6 +92,14 @@ def detect_devices() -> GPUStatus:
 
 
 def get_memory(device: str) -> tuple[float, float] | None:
+    """Get memory usage for a device.
+
+    Args:
+        device: Device string (e.g., "cuda:0", "mps", "cpu").
+
+    Returns:
+        Tuple of (used_mb, total_mb), or None if device is CPU or unavailable.
+    """
     torch = _get_torch()
     if torch is None:
         return None
@@ -108,6 +129,11 @@ def get_memory(device: str) -> tuple[float, float] | None:
 
 
 def clear_cache(device: str | None = None) -> None:
+    """Clear GPU memory cache.
+
+    Args:
+        device: Specific device to clear, or None to clear all devices.
+    """
     torch = _get_torch()
     if torch is None:
         return
@@ -129,6 +155,11 @@ def clear_cache(device: str | None = None) -> None:
 
 
 def get_optimal_device() -> str:
+    """Get the optimal compute device.
+
+    Returns:
+        Device string: "cuda:0" if CUDA available, "mps" if Apple Silicon, else "cpu".
+    """
     torch = _get_torch()
     if torch is None:
         return "cpu"
@@ -143,6 +174,12 @@ def get_optimal_device() -> str:
 
 
 def get_status() -> dict[str, Any]:
+    """Get comprehensive GPU status including memory usage.
+
+    Returns:
+        Dictionary with device availability, count, torch version,
+        and per-device memory info.
+    """
     status = detect_devices()
     memory_info: list[dict[str, Any]] = []
 
@@ -172,6 +209,12 @@ def get_status() -> dict[str, Any]:
 
 
 class GPUAllocator:
+    """Thread-safe GPU device allocator using a singleton pattern.
+
+    Tracks model allocations across devices and distributes new models
+    to devices with the most available memory.
+    """
+
     _instance: "GPUAllocator | None" = None
 
     def __init__(self) -> None:

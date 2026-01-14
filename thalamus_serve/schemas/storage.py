@@ -1,9 +1,13 @@
+"""Storage-related schema types for S3 and URLs."""
+
 import re
 
 from pydantic import BaseModel, Field, field_validator
 
 
 class S3Ref(BaseModel):
+    """Reference to an S3 object with bucket and key."""
+
     bucket: str = Field(..., min_length=3, max_length=63)
     key: str = Field(..., min_length=1)
     region: str | None = None
@@ -29,6 +33,8 @@ class S3Ref(BaseModel):
 
 
 class Url(BaseModel):
+    """Validated HTTP/HTTPS URL."""
+
     url: str
 
     @field_validator("url")
@@ -40,6 +46,8 @@ class Url(BaseModel):
 
 
 class S3PresignedUrl(BaseModel):
+    """S3 presigned URL with signature validation."""
+
     url: str
 
     @field_validator("url")

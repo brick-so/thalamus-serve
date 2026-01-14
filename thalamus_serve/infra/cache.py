@@ -1,13 +1,17 @@
+"""LRU file cache for model weights with automatic eviction."""
+
 import hashlib
 import os
+from collections.abc import Callable
 from pathlib import Path
 from threading import Lock
-from typing import Callable
 
 from pydantic import BaseModel, computed_field
 
 
 class CacheStats(BaseModel, frozen=True):
+    """Statistics about cache usage and performance."""
+
     total_size_bytes: int
     file_count: int
     max_size_bytes: int
@@ -22,6 +26,17 @@ class CacheStats(BaseModel, frozen=True):
 
 
 class WeightCache:
+    """Thread-safe LRU file cache for model weights.
+
+    Caches downloaded model weights to disk with automatic eviction when
+    the cache exceeds the configured maximum size. Uses LRU (least recently
+    used) eviction based on file access times.
+
+    Args:
+        cache_dir: Directory to store cached files.
+        max_size_gb: Maximum cache size in gigabytes before eviction triggers.
+    """
+
     def __init__(self, cache_dir: Path, max_size_gb: float = 50.0) -> None:
         self._cache_dir = cache_dir
         self._max_size_bytes = int(max_size_gb * 1e9)
@@ -40,6 +55,14 @@ class WeightCache:
         return self._cache_dir / f"{key_hash}_{filename}"
 
     def get(self, key: str) -> Path | None:
+        """Get a cached file by key.
+
+        Args:
+            key: Cache key (typically a URL or identifier).
+
+        Returns:
+            Path to cached file if it exists, None otherwise.
+        """
         with self._lock:
             path = self._key_to_path(key)
             if path.exists():
@@ -50,6 +73,21 @@ class WeightCache:
             return None
 
     def put(self, key: str, download_fn: Callable[[Path], None]) -> Path:
+        """Get or download a file into the cache.
+
+        If the key exists in cache, returns the cached path. Otherwise,
+        calls download_fn to download the file, caches it, and returns the path.
+
+        Args:
+            key: Cache key (typically a URL or identifier).
+            download_fn: Function that downloads content to the given path.
+
+        Returns:
+            Path to the cached file.
+
+        Raises:
+            Exception: If download_fn raises an exception.
+        """
         with self._lock:
             path = self._key_to_path(key)
             if path.exists():
@@ -71,6 +109,7 @@ class WeightCache:
             return path
 
     def contains(self, key: str) -> bool:
+        """Check if a key exists in the cache."""
         with self._lock:
             return self._key_to_path(key).exists()
 
@@ -104,6 +143,11 @@ class WeightCache:
         return freed
 
     def clear(self) -> tuple[int, int]:
+        """Clear all cached files.
+
+        Returns:
+            Tuple of (bytes_freed, files_deleted).
+        """
         with self._lock:
             total_bytes = 0
             total_files = 0
@@ -120,6 +164,7 @@ class WeightCache:
             return (total_bytes, total_files)
 
     def stats(self) -> CacheStats:
+        """Get cache statistics including size, file count, and hit rate."""
         with self._lock:
             return CacheStats(
                 total_size_bytes=self._get_size(),

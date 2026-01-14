@@ -1,9 +1,9 @@
 import os
 import time
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Lock
-from typing import Callable
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -15,13 +15,48 @@ from thalamus_serve.core.middleware import APIKeyAuth
 from thalamus_serve.core.model import ModelRegistry, ModelSpec
 from thalamus_serve.core.routes import RouteContext, create_routes
 from thalamus_serve.infra.gpu import GPUAllocator
-from thalamus_serve.observability.logging import log, setup as setup_logging
+from thalamus_serve.observability.logging import log
+from thalamus_serve.observability.logging import setup as setup_logging
 from thalamus_serve.observability.metrics import MODEL_INFO
 from thalamus_serve.observability.middleware import RequestLogging
 from thalamus_serve.storage.fetch import fetch_weight
 
 
 class Thalamus:
+    """ML model serving application built on FastAPI.
+
+    Thalamus provides a simple decorator-based API for registering and serving
+    machine learning models with built-in observability, caching, and GPU management.
+
+    Example:
+        ```python
+        from thalamus_serve import Thalamus
+        from pydantic import BaseModel
+
+        app = Thalamus()
+
+        class InputSchema(BaseModel):
+            text: str
+
+        class OutputSchema(BaseModel):
+            label: str
+
+        @app.model(model_id="classifier", default=True)
+        class MyModel:
+            def predict(self, inputs: list[InputSchema]) -> list[OutputSchema]:
+                return [OutputSchema(label="positive") for _ in inputs]
+
+        if __name__ == "__main__":
+            app.serve()
+        ```
+
+    Args:
+        name: Application name used in FastAPI title and logging.
+        log_level: Logging level (DEBUG, INFO, WARNING, ERROR). Can be overridden
+            by THALAMUS_LOG_LEVEL environment variable.
+        lazy_load: If True, models are loaded on first request instead of at startup.
+    """
+
     def __init__(
         self,
         name: str = "thalamus",
@@ -50,6 +85,31 @@ class Thalamus:
         input_type: type | None = None,
         output_type: type | None = None,
     ) -> Callable[[type], type]:
+        """Decorator to register a model class with the application.
+
+        The decorated class should implement a `predict` method that takes a list
+        of inputs and returns a list of outputs. Optionally, it can implement
+        `load`, `preprocess`, `postprocess`, and `is_ready` methods.
+
+        Args:
+            model_id: Unique identifier for the model. Defaults to class name.
+            version: Semantic version string (e.g., "1.0.0").
+            description: Human-readable description. Defaults to class docstring.
+            default: If True, this model is used when no model is specified in requests.
+            default_version: If True, this version is used when no version is specified.
+            critical: If True, the /ready endpoint waits for this model to load.
+            required_weights: List of weight names that must be configured.
+            optional_weights: List of weight names that may be configured.
+            device: Device preference ("auto", "cpu", "cuda", "cuda:0", "mps").
+            input_type: Pydantic model for input validation. Inferred from
+                predict() if not provided.
+            output_type: Pydantic model for output serialization. Inferred
+                from predict() if not provided.
+
+        Returns:
+            Decorator function that registers the class and returns it unchanged.
+        """
+
         def decorator(cls: type) -> type:
             spec = ModelSpec.from_class(
                 cls,
@@ -190,6 +250,16 @@ class Thalamus:
         await self._app(scope, receive, send)
 
     def serve(self, host: str = "0.0.0.0", port: int = 8000) -> None:
+        """Start the HTTP server.
+
+        This is a convenience method that runs the application using uvicorn.
+        For production deployments, consider running with uvicorn directly
+        or using a process manager like gunicorn.
+
+        Args:
+            host: Host address to bind to.
+            port: Port number to listen on.
+        """
         import uvicorn
 
         uvicorn.run(self, host=host, port=port)

@@ -1,8 +1,10 @@
-from thalamus_serve.core.app import Thalamus
 import os
 from pathlib import Path
-from pydantic import BaseModel
+
 import torch
+from pydantic import BaseModel
+
+from thalamus_serve.core.app import Thalamus
 
 
 class Input(BaseModel):
