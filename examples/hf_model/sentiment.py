@@ -35,6 +35,8 @@ app = Thalamus()
     weights={
         "model": HFWeight(repo="distilbert-base-uncased-finetuned-sst-2-english"),
     },
+    input_type=TextInput,
+    output_type=SentimentOutput,
 )
 class SentimentAnalyzer:
     """Sentiment analyzer using HuggingFace transformers pipeline."""
@@ -46,13 +48,12 @@ class SentimentAnalyzer:
         """Load the sentiment analysis pipeline from downloaded weights."""
         from transformers import pipeline
 
-        device_id = 0 if device.startswith("cuda") else -1
         # Use the downloaded model path from weights dict
         model_path = str(weights["model"])
         self.pipeline = pipeline(
             "sentiment-analysis",
             model=model_path,
-            device=device_id,
+            device=device,
         )
 
     def predict(self, inputs: list[TextInput]) -> list[SentimentOutput]:

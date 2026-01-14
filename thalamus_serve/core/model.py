@@ -1,6 +1,6 @@
 """Model specification and registry for managing registered models."""
 
-from typing import Any, get_args, get_origin, get_type_hints
+from typing import Any
 
 from packaging.version import Version
 from pydantic import BaseModel
@@ -45,53 +45,40 @@ class ModelSpec:
         self.device: str | None = None
 
     @classmethod
-    def _infer_types_from_predict(
-        cls, model_cls: type
-    ) -> tuple[type[BaseModel], type[BaseModel]]:
-        hints = get_type_hints(model_cls.predict)
-        params = [k for k in hints if k != "return"]
-        if not params:
-            raise TypeError(f"{model_cls.__name__}.predict needs typed params")
-
-        input_hint = hints[params[0]]
-        input_origin = get_origin(input_hint)
-        input_args = get_args(input_hint)
-        input_type = (
-            input_args[0] if input_origin is list and input_args else input_hint
-        )
-
-        output_hint = hints.get("return")
-        output_origin = get_origin(output_hint)
-        output_args = get_args(output_hint)
-        output_type = (
-            output_args[0] if output_origin is list and output_args else output_hint
-        )
-
-        return input_type, output_type
-
-    @classmethod
     def from_class(
         cls,
         model_cls: type,
-        model_id: str | None = None,
-        version: str = "1.0.0",
-        description: str | None = None,
-        default: bool = False,
-        default_version: bool = False,
-        critical: bool = True,
-        weights: dict[str, WeightSource] | None = None,
-        device: str = "auto",
-        input_type: type[BaseModel] | None = None,
-        output_type: type[BaseModel] | None = None,
+        model_id: str | None,
+        version: str,
+        description: str | None,
+        default: bool,
+        default_version: bool,
+        critical: bool,
+        weights: dict[str, WeightSource] | None,
+        device: str,
+        input_type: type[BaseModel],
+        output_type: type[BaseModel],
     ) -> "ModelSpec":
+        """Create a ModelSpec from a model class.
+
+        Args:
+            model_cls: The model class to create a spec for.
+            model_id: Unique identifier. Defaults to class name if None.
+            version: Semantic version string.
+            description: Human-readable description. Defaults to docstring if None.
+            default: Whether this is the default model.
+            default_version: Whether this is the default version.
+            critical: Whether this model is critical for readiness.
+            weights: Weight source configurations.
+            device: Device preference.
+            input_type: Pydantic model for input validation (required).
+            output_type: Pydantic model for output serialization (required).
+
+        Returns:
+            A configured ModelSpec instance.
+        """
         mid = model_id or model_cls.__name__
         desc = description or model_cls.__doc__ or ""
-
-        if input_type and output_type:
-            resolved_input = input_type
-            resolved_output = output_type
-        else:
-            resolved_input, resolved_output = cls._infer_types_from_predict(model_cls)
 
         has_preprocess = hasattr(model_cls, "preprocess") and callable(
             getattr(model_cls, "preprocess", None)
@@ -105,8 +92,8 @@ class ModelSpec:
             version=version,
             description=desc.strip(),
             cls=model_cls,
-            input_type=resolved_input,
-            output_type=resolved_output,
+            input_type=input_type,
+            output_type=output_type,
             has_preprocess=has_preprocess,
             has_postprocess=has_postprocess,
             is_default=default,

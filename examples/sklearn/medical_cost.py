@@ -58,6 +58,8 @@ app = Thalamus()
             ]
         ),
     },
+    input_type=MedicalCostInput,
+    output_type=MedicalCostOutput,
 )
 class MedicalCostPredictor:
     """Medical cost prediction model using Linear Regression.
@@ -111,7 +113,9 @@ class MedicalCostPredictor:
             contributions = self._model.coef_ * inputs[i]
             contribution_dict = {
                 name: round(float(contrib), 2)
-                for name, contrib in zip(self._feature_columns, contributions)
+                for name, contrib in zip(
+                    self._feature_columns, contributions, strict=True
+                )
             }
 
             outputs.append(

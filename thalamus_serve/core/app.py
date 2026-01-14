@@ -41,7 +41,12 @@ class Thalamus:
         class OutputSchema(BaseModel):
             label: str
 
-        @app.model(model_id="classifier", default=True)
+        @app.model(
+            model_id="classifier",
+            default=True,
+            input_type=InputSchema,
+            output_type=OutputSchema,
+        )
         class MyModel:
             def predict(self, inputs: list[InputSchema]) -> list[OutputSchema]:
                 return [OutputSchema(label="positive") for _ in inputs]
@@ -73,6 +78,7 @@ class Thalamus:
 
     def model(
         self,
+        *,
         model_id: str | None = None,
         version: str = "1.0.0",
         description: str | None = None,
@@ -81,8 +87,8 @@ class Thalamus:
         critical: bool = True,
         weights: dict[str, WeightSource] | None = None,
         device: str = "auto",
-        input_type: type | None = None,
-        output_type: type | None = None,
+        input_type: type,
+        output_type: type,
     ) -> Callable[[type], type]:
         """Decorator to register a model class with the application.
 
@@ -101,10 +107,8 @@ class Thalamus:
                 (S3Weight, HFWeight, or HTTPWeight). These are fetched and passed
                 to the model's load() method.
             device: Device preference ("auto", "cpu", "cuda", "cuda:0", "mps").
-            input_type: Pydantic model for input validation. Inferred from
-                predict() if not provided.
-            output_type: Pydantic model for output serialization. Inferred
-                from predict() if not provided.
+            input_type: Pydantic model for input validation (required).
+            output_type: Pydantic model for output serialization (required).
 
         Returns:
             Decorator function that registers the class and returns it unchanged.

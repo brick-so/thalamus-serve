@@ -36,6 +36,8 @@ app = Thalamus()
     version="1.0.0",
     description="ResNet-50 ImageNet classifier",
     default=True,
+    input_type=ImageInput,
+    output_type=ClassificationOutput,
 )
 class ResNetClassifier:
     """ResNet-50 image classifier using torchvision pretrained weights."""

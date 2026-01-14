@@ -61,12 +61,27 @@ curl -X POST http://localhost:8000/predict \
 This example demonstrates loading multiple weight files:
 
 ```python
+from pathlib import Path
+from pydantic import BaseModel
 from thalamus_serve import Thalamus, S3Weight
 
 app = Thalamus()
 
+class MedicalCostInput(BaseModel):
+    age: int
+    sex: str
+    bmi: float
+    children: int
+    smoker: str
+    region: str
+
+class MedicalCostOutput(BaseModel):
+    predicted_charges: float
+
 @app.model(
     model_id="medical-cost",
+    input_type=MedicalCostInput,
+    output_type=MedicalCostOutput,
     weights={
         "model": S3Weight(bucket="my-models", key="medical_cost/model.joblib"),
         "preprocessor": S3Weight(bucket="my-models", key="medical_cost/preprocessor.joblib"),

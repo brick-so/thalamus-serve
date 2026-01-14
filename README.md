@@ -10,7 +10,7 @@ A Python ML model serving framework built on FastAPI with built-in observability
 ## Features
 
 - **Simple Decorator API** - Register models with `@app.model()` decorator
-- **Automatic Schema Generation** - Input/output types inferred from method signatures
+- **Explicit Schema Types** - Input/output types specified via `input_type` and `output_type` parameters
 - **Built-in Observability** - Prometheus metrics, structured logging
 - **Weight Management** - Automatic fetching from S3, HuggingFace Hub, or HTTP
 - **GPU Management** - Automatic device detection and allocation (CUDA/MPS/CPU)
@@ -56,6 +56,8 @@ app = Thalamus()
     version="1.0.0",
     description="Sentiment analysis model",
     default=True,
+    input_type=TextInput,
+    output_type=SentimentOutput,
 )
 class SentimentModel:
     def load(self, weights: dict[str, Path], device: str) -> None:
@@ -141,14 +143,23 @@ class MyModel:
 Models can load weights from multiple sources by specifying them directly in the decorator:
 
 ```python
+from pydantic import BaseModel
 from thalamus_serve import Thalamus, HFWeight, S3Weight, HTTPWeight
 
 app = Thalamus()
+
+class MyInput(BaseModel):
+    text: str
+
+class MyOutput(BaseModel):
+    embedding: list[float]
 
 @app.model(
     model_id="my-model",
     version="1.0.0",
     device="cuda:0",
+    input_type=MyInput,
+    output_type=MyOutput,
     weights={
         "model": HFWeight(repo="bert-base-uncased"),
         "tokenizer": S3Weight(bucket="my-bucket", key="models/tokenizer.json"),
