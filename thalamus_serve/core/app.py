@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from starlette.requests import Request
 
-from thalamus_serve.config import get_model_config
+from thalamus_serve.config import WeightSource
 from thalamus_serve.core.middleware import APIKeyAuth
 from thalamus_serve.core.model import ModelRegistry, ModelSpec
 from thalamus_serve.core.routes import RouteContext, create_routes
@@ -79,8 +79,7 @@ class Thalamus:
         default: bool = False,
         default_version: bool = False,
         critical: bool = True,
-        required_weights: list[str] | None = None,
-        optional_weights: list[str] | None = None,
+        weights: dict[str, WeightSource] | None = None,
         device: str = "auto",
         input_type: type | None = None,
         output_type: type | None = None,
@@ -98,8 +97,9 @@ class Thalamus:
             default: If True, this model is used when no model is specified in requests.
             default_version: If True, this version is used when no version is specified.
             critical: If True, the /ready endpoint waits for this model to load.
-            required_weights: List of weight names that must be configured.
-            optional_weights: List of weight names that may be configured.
+            weights: Dictionary mapping weight names to WeightSource configurations
+                (S3Weight, HFWeight, or HTTPWeight). These are fetched and passed
+                to the model's load() method.
             device: Device preference ("auto", "cpu", "cuda", "cuda:0", "mps").
             input_type: Pydantic model for input validation. Inferred from
                 predict() if not provided.
@@ -119,8 +119,7 @@ class Thalamus:
                 default,
                 default_version,
                 critical,
-                required_weights,
-                optional_weights,
+                weights,
                 device,
                 input_type,
                 output_type,
@@ -137,31 +136,12 @@ class Thalamus:
         log.info("model_loading", model=spec.id, version=spec.version)
         start = time.perf_counter()
 
-        deploy_config = get_model_config(spec.id, spec.version)
-        device_preference = (
-            deploy_config.device
-            if deploy_config.device != "auto"
-            else spec.device_preference
-        )
-
-        missing_weights = [
-            name for name in spec.required_weights if name not in deploy_config.weights
-        ]
-        if missing_weights:
-            raise ValueError(
-                f"Missing required weights for {spec.id}: {missing_weights}"
-            )
-
         weights: dict[str, Path] = {}
-        for weight_name, weight_source in deploy_config.weights.items():
-            if (
-                weight_name in spec.required_weights
-                or weight_name in spec.optional_weights
-            ):
-                local_path = fetch_weight(weight_source)
-                weights[weight_name] = local_path
+        for weight_name, weight_source in spec.weights.items():
+            local_path = fetch_weight(weight_source)
+            weights[weight_name] = local_path
 
-        device = GPUAllocator.get().allocate(device_preference)
+        device = GPUAllocator.get().allocate(spec.device_preference)
         spec.device = device
 
         spec.instance = spec.cls()

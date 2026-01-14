@@ -1,12 +1,17 @@
+"""Model specification and registry for managing registered models."""
+
 from typing import Any, get_args, get_origin, get_type_hints
 
 from packaging.version import Version
 from pydantic import BaseModel
 
+from thalamus_serve.config import WeightSource
 from thalamus_serve.infra.gpu import GPUAllocator
 
 
 class ModelSpec:
+    """Specification for a registered model including metadata and configuration."""
+
     def __init__(
         self,
         model_id: str,
@@ -20,8 +25,7 @@ class ModelSpec:
         is_default: bool = False,
         is_default_version: bool = False,
         is_critical: bool = True,
-        required_weights: list[str] | None = None,
-        optional_weights: list[str] | None = None,
+        weights: dict[str, WeightSource] | None = None,
         device_preference: str = "auto",
     ) -> None:
         self.id = model_id
@@ -35,8 +39,7 @@ class ModelSpec:
         self.is_default = is_default
         self.is_default_version = is_default_version
         self.is_critical = is_critical
-        self.required_weights = required_weights or []
-        self.optional_weights = optional_weights or []
+        self.weights = weights or {}
         self.device_preference = device_preference
         self.instance: Any = None
         self.device: str | None = None
@@ -76,8 +79,7 @@ class ModelSpec:
         default: bool = False,
         default_version: bool = False,
         critical: bool = True,
-        required_weights: list[str] | None = None,
-        optional_weights: list[str] | None = None,
+        weights: dict[str, WeightSource] | None = None,
         device: str = "auto",
         input_type: type[BaseModel] | None = None,
         output_type: type[BaseModel] | None = None,
@@ -110,8 +112,7 @@ class ModelSpec:
             is_default=default,
             is_default_version=default_version,
             is_critical=critical,
-            required_weights=required_weights,
-            optional_weights=optional_weights,
+            weights=weights,
             device_preference=device,
         )
 

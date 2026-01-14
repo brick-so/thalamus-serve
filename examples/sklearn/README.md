@@ -32,20 +32,21 @@ curl -X POST http://localhost:8000/predict \
 
 ## Loading Pre-trained Models
 
-To load a pre-trained model, configure `thalamus-deploy.json`:
+To load a pre-trained model, specify weights directly in the decorator:
 
-```json
-{
-  "models": {
-    "iris": {
-      "weights": {
-        "model": {
-          "type": "s3",
-          "bucket": "my-models",
-          "key": "iris/model.joblib"
-        }
-      }
-    }
-  }
-}
+```python
+from thalamus_serve import Thalamus, S3Weight
+
+app = Thalamus()
+
+@app.model(
+    model_id="iris",
+    weights={
+        "model": S3Weight(bucket="my-models", key="iris/model.joblib"),
+    },
+)
+class IrisClassifier:
+    def load(self, weights: dict[str, Path], device: str) -> None:
+        import joblib
+        self.model = joblib.load(weights["model"])
 ```

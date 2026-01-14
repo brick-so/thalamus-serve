@@ -34,7 +34,6 @@ app = Thalamus()
     version="1.0.0",
     description="Iris species classifier",
     default=True,
-    optional_weights=["model"],
 )
 class IrisClassifier:
     """Random Forest classifier for Iris species prediction."""

@@ -1,11 +1,14 @@
-"""HuggingFace Transformers sentiment analysis example."""
+"""HuggingFace Transformers sentiment analysis example.
+
+Demonstrates using HFWeight to download model weights from HuggingFace Hub.
+"""
 
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
 
-from thalamus_serve import Thalamus
+from thalamus_serve import HFWeight, Thalamus
 
 
 class TextInput(BaseModel):
@@ -29,6 +32,9 @@ app = Thalamus()
     version="1.0.0",
     description="DistilBERT sentiment analysis",
     default=True,
+    weights={
+        "model": HFWeight(repo="distilbert-base-uncased-finetuned-sst-2-english"),
+    },
 )
 class SentimentAnalyzer:
     """Sentiment analyzer using HuggingFace transformers pipeline."""
@@ -37,13 +43,15 @@ class SentimentAnalyzer:
         self.pipeline: Any = None
 
     def load(self, weights: dict[str, Path], device: str) -> None:
-        """Load the sentiment analysis pipeline."""
+        """Load the sentiment analysis pipeline from downloaded weights."""
         from transformers import pipeline
 
         device_id = 0 if device.startswith("cuda") else -1
+        # Use the downloaded model path from weights dict
+        model_path = str(weights["model"])
         self.pipeline = pipeline(
             "sentiment-analysis",
-            model="distilbert-base-uncased-finetuned-sst-2-english",
+            model=model_path,
             device=device_id,
         )
 

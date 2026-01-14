@@ -138,34 +138,61 @@ class MyModel:
 
 ### Weight Sources
 
-Models can load weights from multiple sources via `thalamus-deploy.json`:
+Models can load weights from multiple sources by specifying them directly in the decorator:
 
-```json
-{
-  "models": {
-    "my-model": {
-      "device": "cuda:0",
-      "weights": {
-        "model": {
-          "type": "hf",
-          "repo": "bert-base-uncased",
-          "filename": "pytorch_model.bin"
-        },
-        "tokenizer": {
-          "type": "s3",
-          "bucket": "my-bucket",
-          "key": "models/tokenizer.json"
-        }
-      }
-    }
-  }
-}
+```python
+from thalamus_serve import Thalamus, HFWeight, S3Weight, HTTPWeight
+
+app = Thalamus()
+
+@app.model(
+    model_id="my-model",
+    version="1.0.0",
+    device="cuda:0",
+    weights={
+        "model": HFWeight(repo="bert-base-uncased"),
+        "tokenizer": S3Weight(bucket="my-bucket", key="models/tokenizer.json"),
+    },
+)
+class MyModel:
+    def load(self, weights: dict[str, Path], device: str) -> None:
+        # weights["model"] is a directory path (full repo)
+        # weights["tokenizer"] is a file path
+        pass
 ```
 
-Supported weight sources:
-- **HuggingFace Hub**: `{"type": "hf", "repo": "...", "filename": "...", "revision": "main"}`
-- **S3**: `{"type": "s3", "bucket": "...", "key": "...", "region": "..."}`
-- **HTTP**: `{"type": "http", "url": "..."}`
+**Supported weight sources:**
+
+| Source | Single File | Directory/Sharded |
+|--------|-------------|-------------------|
+| **HuggingFace** | `HFWeight(repo="...", filename="model.bin")` | `HFWeight(repo="...")` |
+| **S3** | `S3Weight(bucket="...", key="path/model.pt")` | `S3Weight(bucket="...", prefix="path/shards/")` |
+| **HTTP** | `HTTPWeight(urls=["https://.../model.pt"])` | `HTTPWeight(urls=["https://.../shard1.pt", "https://.../shard2.pt"])` |
+
+**Examples:**
+
+```python
+# HuggingFace - single file
+HFWeight(repo="bert-base-uncased", filename="pytorch_model.bin", revision="main")
+
+# HuggingFace - full repo snapshot (for sharded models)
+HFWeight(repo="meta-llama/Llama-2-7b-hf")
+
+# S3 - single file
+S3Weight(bucket="my-models", key="bert/model.pt", region="us-east-1")
+
+# S3 - directory prefix (downloads all files under prefix)
+S3Weight(bucket="my-models", prefix="llama/shards/")
+
+# HTTP - single file
+HTTPWeight(urls=["https://example.com/model.pt"])
+
+# HTTP - multiple files (sharded)
+HTTPWeight(urls=[
+    "https://example.com/model-00001.pt",
+    "https://example.com/model-00002.pt",
+])
+```
 
 ### Environment Variables
 
@@ -175,7 +202,6 @@ Supported weight sources:
 | `THALAMUS_LOG_LEVEL` | INFO | Logging level |
 | `THALAMUS_CACHE_DIR` | /tmp/thalamus | Weight cache directory |
 | `THALAMUS_CACHE_MAX_GB` | 50 | Maximum cache size in GB |
-| `THALAMUS_DEPLOY_CONFIG` | - | Path to deployment config file |
 | `HF_TOKEN` | - | HuggingFace authentication token |
 | `AWS_ACCESS_KEY_ID` | - | AWS credentials for S3 |
 | `AWS_SECRET_ACCESS_KEY` | - | AWS credentials for S3 |

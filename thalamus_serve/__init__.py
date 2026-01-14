@@ -24,6 +24,7 @@ Basic usage:
         app.serve()
 """
 
+from thalamus_serve.config import HFWeight, HTTPWeight, S3Weight, WeightSource
 from thalamus_serve.core.app import Thalamus
 from thalamus_serve.infra.cache import CacheStats, WeightCache
 from thalamus_serve.infra.gpu import (
@@ -61,6 +62,10 @@ from thalamus_serve.utils import env, require_env
 
 __all__ = [
     "Thalamus",
+    "S3Weight",
+    "HFWeight",
+    "HTTPWeight",
+    "WeightSource",
     "fetch",
     "upload_s3",
     "exists_s3",

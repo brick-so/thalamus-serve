@@ -54,7 +54,7 @@ uv run uvicorn examples.vanilla.vanilla:app --host 0.0.0.0 --port 8000
 
 ### Configuration
 
-- **`thalamus-deploy.json`**: Deployment config file specifying model weights and device preferences. Located at project root or set via `THALAMUS_DEPLOY_CONFIG` env var.
+- **Weight Sources**: Model weights are configured directly in the `@app.model()` decorator using `S3Weight`, `HFWeight`, or `HTTPWeight` types.
 
 - **Environment Variables**:
   - `THALAMUS_API_KEY` - Required for protected endpoints

@@ -55,11 +55,20 @@ def fetch_weight(source: WeightSource) -> Path:
     if isinstance(source, HFWeight):
         return _fetch_hf_weight(source)
     if isinstance(source, HTTPWeight):
-        return _fetch_http(source.url, use_cache=True, timeout=300.0)
+        return _fetch_http_weight(source)
     raise ValueError(f"Unknown weight source type: {type(source)}")
 
 
 def _fetch_s3_weight(source: S3Weight) -> Path:
+    """Fetch weights from S3.
+
+    Returns:
+        Path to downloaded file (if key specified) or directory (if prefix specified).
+    """
+    if source.prefix is not None:
+        return _fetch_s3_prefix(source)
+
+    # Single file download
     cache_key = f"s3://{source.bucket}/{source.key}"
     weight_cache = _get_cache()
 
@@ -80,14 +89,78 @@ def _fetch_s3_weight(source: S3Weight) -> Path:
     return weight_cache.put(cache_key, download)
 
 
+def _fetch_s3_prefix(source: S3Weight) -> Path:
+    """Fetch all files under an S3 prefix (directory download for sharded models)."""
+    import hashlib
+
+    prefix = source.prefix
+    cache_key = f"s3://{source.bucket}/{prefix}"
+    weight_cache = _get_cache()
+
+    # Create a stable directory name based on the prefix
+    prefix_hash = hashlib.sha256(cache_key.encode()).hexdigest()[:16]
+    cache_dir = weight_cache.cache_dir / "s3_prefixes" / prefix_hash
+    marker_file = cache_dir / ".complete"
+
+    # Check if already downloaded
+    if marker_file.exists():
+        log.debug("cache_hit", source=cache_key, path=str(cache_dir))
+        cache_dir.touch()  # Update access time for LRU
+        return cache_dir
+
+    log.info("downloading_prefix", source=cache_key)
+
+    # List all objects under the prefix
+    client = _s3_client()
+    paginator = client.get_paginator("list_objects_v2")
+    pages = paginator.paginate(Bucket=source.bucket, Prefix=prefix)
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    total_size = 0
+    file_count = 0
+
+    for page in pages:
+        for obj in page.get("Contents", []):
+            obj_key = obj["Key"]
+            # Get relative path from prefix
+            relative_path = obj_key[len(prefix) :].lstrip("/")
+            if not relative_path:
+                continue
+
+            local_path = cache_dir / relative_path
+            local_path.parent.mkdir(parents=True, exist_ok=True)
+
+            log.debug("downloading_file", key=obj_key)
+            client.download_file(source.bucket, obj_key, str(local_path))
+            total_size += local_path.stat().st_size
+            file_count += 1
+
+    # Mark as complete
+    marker_file.touch()
+
+    log.info(
+        "downloaded_prefix",
+        source=cache_key,
+        files=file_count,
+        size_mb=round(total_size / 1048576, 2),
+    )
+
+    return cache_dir
+
+
 def _fetch_hf_weight(source: HFWeight) -> Path:
+    """Fetch weights from HuggingFace Hub.
+
+    Returns:
+        Path to downloaded file (if filename specified) or directory (if snapshot).
+    """
     token = os.environ.get("HF_TOKEN")
     hf_cache_dir = _get_cache().cache_dir / "huggingface"
 
     log.info(
         "fetching_hf",
         repo=source.repo,
-        filename=source.filename or "full_repo",
+        filename=source.filename or "snapshot",
         revision=source.revision,
     )
 
@@ -107,8 +180,78 @@ def _fetch_hf_weight(source: HFWeight) -> Path:
             cache_dir=hf_cache_dir,
         )
 
-    log.info("fetched_hf", path=path)
-    return Path(path)
+    result = Path(path)
+
+    # Touch path to update access time for LRU tracking
+    try:
+        result.touch()
+    except OSError:
+        pass
+
+    log.info("fetched_hf", path=str(result), is_directory=result.is_dir())
+    return result
+
+
+def _fetch_http_weight(source: HTTPWeight) -> Path:
+    """Fetch weights from HTTP/HTTPS.
+
+    Returns:
+        Path to downloaded file (single URL) or directory (multiple URLs).
+    """
+    if len(source.urls) > 1:
+        return _fetch_http_urls(source)
+
+    # Single file download
+    return _fetch_http(source.urls[0], use_cache=True, timeout=300.0)
+
+
+def _fetch_http_urls(source: HTTPWeight) -> Path:
+    """Fetch multiple files from HTTP URLs (for sharded models)."""
+    import hashlib
+
+    urls = source.urls
+    # Create cache key from sorted URLs for consistency
+    cache_key = "http_multi:" + ",".join(sorted(urls))
+    key_hash = hashlib.sha256(cache_key.encode()).hexdigest()[:16]
+
+    weight_cache = _get_cache()
+    cache_dir = weight_cache.cache_dir / "http_urls" / key_hash
+    marker_file = cache_dir / ".complete"
+
+    # Check if already downloaded
+    if marker_file.exists():
+        log.debug("cache_hit", source=f"http_urls[{len(urls)}]", path=str(cache_dir))
+        cache_dir.touch()  # Update access time for LRU
+        return cache_dir
+
+    log.info("downloading_urls", count=len(urls))
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    total_size = 0
+
+    for url in urls:
+        # Extract filename from URL
+        filename = url.split("/")[-1].split("?")[0] or "file"
+        local_path = cache_dir / filename
+
+        log.debug("downloading_file", url=url)
+        with httpx.stream("GET", url, timeout=300.0, follow_redirects=True) as r:
+            r.raise_for_status()
+            with open(local_path, "wb") as f:
+                for chunk in r.iter_bytes(8192):
+                    f.write(chunk)
+        total_size += local_path.stat().st_size
+
+    # Mark as complete
+    marker_file.touch()
+
+    log.info(
+        "downloaded_urls",
+        files=len(urls),
+        size_mb=round(total_size / 1048576, 2),
+    )
+
+    return cache_dir
 
 
 def fetch(

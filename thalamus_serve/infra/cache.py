@@ -113,32 +113,209 @@ class WeightCache:
         with self._lock:
             return self._key_to_path(key).exists()
 
-    def _get_size(self) -> int:
+    def _get_thalamus_size(self) -> int:
+        """Get total size of thalamus cache files (S3, HTTP downloads)."""
         return sum(f.stat().st_size for f in self._cache_dir.iterdir() if f.is_file())
 
-    def _evict_if_needed(self) -> int:
-        current_size = self._get_size()
-        if current_size <= self._max_size_bytes:
+    def _get_s3_prefix_size(self) -> int:
+        """Get total size of S3 prefix directories (sharded model downloads)."""
+        prefix_dir = self._cache_dir / "s3_prefixes"
+        if not prefix_dir.exists():
             return 0
+        total = 0
+        for prefix_cache in prefix_dir.iterdir():
+            if prefix_cache.is_dir():
+                for f in prefix_cache.rglob("*"):
+                    if f.is_file():
+                        total += f.stat().st_size
+        return total
 
-        target_size = int(self._max_size_bytes * 0.8)
+    def _get_http_urls_size(self) -> int:
+        """Get total size of HTTP URL directories (sharded model downloads)."""
+        urls_dir = self._cache_dir / "http_urls"
+        if not urls_dir.exists():
+            return 0
+        total = 0
+        for url_cache in urls_dir.iterdir():
+            if url_cache.is_dir():
+                for f in url_cache.rglob("*"):
+                    if f.is_file():
+                        total += f.stat().st_size
+        return total
+
+    def _get_hf_size(self) -> int:
+        """Get total size of HuggingFace blobs."""
+        hf_dir = self._cache_dir / "huggingface"
+        if not hf_dir.exists():
+            return 0
+        total = 0
+        for model_dir in hf_dir.iterdir():
+            if model_dir.is_dir() and model_dir.name.startswith("models--"):
+                blobs_dir = model_dir / "blobs"
+                if blobs_dir.exists():
+                    for blob in blobs_dir.iterdir():
+                        if blob.is_file():
+                            total += blob.stat().st_size
+        return total
+
+    def _get_size(self) -> int:
+        """Get total cache size including all sources."""
+        return (
+            self._get_thalamus_size()
+            + self._get_s3_prefix_size()
+            + self._get_http_urls_size()
+            + self._get_hf_size()
+        )
+
+    def _evict_thalamus_files(self, target_bytes: int) -> int:
+        """Evict thalamus cache files (S3 single files, HTTP) using LRU."""
         files = [
             (f, f.stat())
             for f in self._cache_dir.iterdir()
-            if f.is_file() and not f.suffix == ".tmp"
+            if f.is_file() and f.suffix != ".tmp"
         ]
         files.sort(key=lambda x: x[1].st_atime)
 
         freed = 0
         for file_path, stat in files:
-            if current_size - freed <= target_size:
+            if self._get_size() <= target_bytes:
                 break
             try:
-                size = stat.st_size
+                freed += stat.st_size
                 file_path.unlink()
-                freed += size
             except OSError:
                 pass
+
+        return freed
+
+    def _evict_s3_prefixes(self, target_bytes: int) -> int:
+        """Evict S3 prefix directories using LRU."""
+        import shutil
+
+        prefix_dir = self._cache_dir / "s3_prefixes"
+        if not prefix_dir.exists():
+            return 0
+
+        # Get directories with their access times
+        dirs = []
+        for d in prefix_dir.iterdir():
+            if d.is_dir():
+                try:
+                    dirs.append((d, d.stat().st_atime))
+                except OSError:
+                    pass
+
+        dirs.sort(key=lambda x: x[1])  # Sort by access time (oldest first)
+
+        freed = 0
+        for dir_path, _ in dirs:
+            if self._get_size() <= target_bytes:
+                break
+            try:
+                # Calculate directory size before deletion
+                dir_size = sum(
+                    f.stat().st_size for f in dir_path.rglob("*") if f.is_file()
+                )
+                shutil.rmtree(dir_path)
+                freed += dir_size
+            except OSError:
+                pass
+
+        return freed
+
+    def _evict_http_urls(self, target_bytes: int) -> int:
+        """Evict HTTP URL directories using LRU."""
+        import shutil
+
+        urls_dir = self._cache_dir / "http_urls"
+        if not urls_dir.exists():
+            return 0
+
+        # Get directories with their access times
+        dirs = []
+        for d in urls_dir.iterdir():
+            if d.is_dir():
+                try:
+                    dirs.append((d, d.stat().st_atime))
+                except OSError:
+                    pass
+
+        dirs.sort(key=lambda x: x[1])  # Sort by access time (oldest first)
+
+        freed = 0
+        for dir_path, _ in dirs:
+            if self._get_size() <= target_bytes:
+                break
+            try:
+                # Calculate directory size before deletion
+                dir_size = sum(
+                    f.stat().st_size for f in dir_path.rglob("*") if f.is_file()
+                )
+                shutil.rmtree(dir_path)
+                freed += dir_size
+            except OSError:
+                pass
+
+        return freed
+
+    def _evict_hf_if_needed(self, target_bytes: int) -> int:
+        """Evict HuggingFace cache entries using HF's cache manager."""
+        hf_dir = self._cache_dir / "huggingface"
+        if not hf_dir.exists():
+            return 0
+
+        try:
+            from huggingface_hub import scan_cache_dir
+        except ImportError:
+            return 0
+
+        try:
+            cache_info = scan_cache_dir(hf_dir)
+        except Exception:
+            return 0
+
+        # Sort repos by last accessed time (oldest first)
+        repos = sorted(cache_info.repos, key=lambda r: r.last_accessed)
+
+        freed = 0
+        for repo in repos:
+            if self._get_size() <= target_bytes:
+                break
+            try:
+                # Get all revisions for this repo and delete them
+                revision_hashes = [rev.commit_hash for rev in repo.revisions]
+                if revision_hashes:
+                    strategy = cache_info.delete_revisions(*revision_hashes)
+                    freed += strategy.expected_freed_size
+                    strategy.execute()
+            except Exception:
+                pass
+
+        return freed
+
+    def _evict_if_needed(self) -> int:
+        """Evict cache entries if over size limit."""
+        current_size = self._get_size()
+        if current_size <= self._max_size_bytes:
+            return 0
+
+        target_size = int(self._max_size_bytes * 0.8)
+        freed = 0
+
+        # First evict thalamus cache files (S3 single files, HTTP single files)
+        freed += self._evict_thalamus_files(target_size)
+
+        # Then evict S3 prefix directories
+        if self._get_size() > target_size:
+            freed += self._evict_s3_prefixes(target_size)
+
+        # Then evict HTTP URL directories
+        if self._get_size() > target_size:
+            freed += self._evict_http_urls(target_size)
+
+        # Finally evict HF cache
+        if self._get_size() > target_size:
+            freed += self._evict_hf_if_needed(target_size)
 
         return freed
 
