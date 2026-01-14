@@ -1,6 +1,7 @@
 import hmac
 import os
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from typing import Any, cast
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -10,7 +11,7 @@ from thalamus_serve.observability.logging import log
 
 
 class APIKeyAuth(BaseHTTPMiddleware):
-    def __init__(self, app, exempt_paths: list[str] | None = None) -> None:
+    def __init__(self, app: Any, exempt_paths: list[str] | None = None) -> None:
         super().__init__(app)
         self.api_key = os.environ.get("THALAMUS_API_KEY")
         self.exempt_paths = exempt_paths or ["/health", "/ready", "/metrics", "/status"]
@@ -21,9 +22,11 @@ class APIKeyAuth(BaseHTTPMiddleware):
             normalized == p or normalized.startswith(p + "/") for p in self.exempt_paths
         )
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+    async def dispatch(
+        self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
         if self._is_exempt(request.url.path):
-            return await call_next(request)
+            return cast(Response, await call_next(request))
 
         if not self.api_key:
             log.critical("api_key_not_configured")
@@ -38,4 +41,4 @@ class APIKeyAuth(BaseHTTPMiddleware):
                 {"error": "Invalid or missing API key"}, status_code=401
             )
 
-        return await call_next(request)
+        return cast(Response, await call_next(request))

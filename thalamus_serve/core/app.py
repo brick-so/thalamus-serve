@@ -1,9 +1,10 @@
 import os
 import time
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from threading import Lock
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -182,7 +183,7 @@ class Thalamus:
         self._start_time = time.perf_counter()
 
         @asynccontextmanager
-        async def lifespan(app: FastAPI):
+        async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             if not self._lazy_load:
                 for m in self._registry.all():
                     self._load_model(m)
@@ -226,7 +227,7 @@ class Thalamus:
         app.include_router(create_routes(ctx))
         return app
 
-    async def __call__(self, scope, receive, send):
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if self._app is None:
             with self._load_lock:
                 if self._app is None:

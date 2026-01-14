@@ -3,6 +3,7 @@
 import os
 import threading
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import boto3
 import httpx
@@ -12,6 +13,9 @@ from thalamus_serve.config import HFWeight, HTTPWeight, S3Weight, WeightSource
 from thalamus_serve.infra.cache import WeightCache
 from thalamus_serve.observability.logging import log
 from thalamus_serve.schemas.storage import S3Ref
+
+if TYPE_CHECKING:
+    from mypy_boto3_s3 import S3Client
 
 _cache: WeightCache | None = None
 _thread_local = threading.local()
@@ -31,7 +35,7 @@ def get_cache() -> WeightCache:
     return _get_cache()
 
 
-def _s3_client():
+def _s3_client() -> "S3Client":
     if not hasattr(_thread_local, "s3_client"):
         _thread_local.s3_client = boto3.client("s3")
     return _thread_local.s3_client
@@ -93,6 +97,7 @@ def _fetch_s3_prefix(source: S3Weight) -> Path:
     """Fetch all files under an S3 prefix (directory download for sharded models)."""
     import hashlib
 
+    assert source.prefix is not None, "prefix must be set for _fetch_s3_prefix"
     prefix = source.prefix
     cache_key = f"s3://{source.bucket}/{prefix}"
     weight_cache = _get_cache()

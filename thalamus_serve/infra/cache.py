@@ -18,7 +18,7 @@ class CacheStats(BaseModel, frozen=True):
     hit_count: int
     miss_count: int
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def hit_rate(self) -> float:
         total = self.hit_count + self.miss_count

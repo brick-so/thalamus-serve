@@ -1,7 +1,7 @@
 """Common schema types for ML model inputs and outputs."""
 
 import base64
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -38,14 +38,14 @@ class BBox(BaseModel):
 
     @field_validator("x2")
     @classmethod
-    def x2_gt_x1(cls, v: float, info) -> float:
+    def x2_gt_x1(cls, v: float, info: Any) -> float:
         if "x1" in info.data and v <= info.data["x1"]:
             raise ValueError("x2 must be > x1")
         return v
 
     @field_validator("y2")
     @classmethod
-    def y2_gt_y1(cls, v: float, info) -> float:
+    def y2_gt_y1(cls, v: float, info: Any) -> float:
         if "y1" in info.data and v <= info.data["y1"]:
             raise ValueError("y2 must be > y1")
         return v
