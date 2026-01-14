@@ -1,18 +1,35 @@
 # scikit-learn Example
 
-This example demonstrates serving a scikit-learn classification model.
+This example demonstrates serving a scikit-learn model with multiple weight files.
+
+## Files
+
+- `medical_cost.py` - Thalamus model serving medical cost predictions
+- `train_medical_cost.py` - Training script that saves model and preprocessor separately
 
 ## Setup
 
 ```bash
-pip install scikit-learn joblib
+pip install scikit-learn joblib pandas
 ```
 
-## Usage
+## Training (Optional)
+
+To train the model and save weights locally:
+
+```bash
+python train_medical_cost.py --output-dir ./weights
+```
+
+This creates two separate weight files:
+- `weights/model.joblib` - Linear regression model and metrics
+- `weights/preprocessor.joblib` - Feature columns and label encoders
+
+## Running the Server
 
 ```bash
 export THALAMUS_API_KEY=your-key
-python iris_classifier.py
+python medical_cost.py
 ```
 
 ## Testing
@@ -21,18 +38,27 @@ python iris_classifier.py
 curl -X POST http://localhost:8000/predict \
   -H "Content-Type: application/json" \
   -H "X-API-Key: your-key" \
-  -d '{"inputs": [{"sepal_length": 5.1, "sepal_width": 3.5, "petal_length": 1.4, "petal_width": 0.2}]}'
+  -d '{
+    "inputs": [{
+      "age": 35,
+      "sex": "male",
+      "bmi": 25.5,
+      "children": 2,
+      "smoker": "no",
+      "region": "northeast"
+    }]
+  }'
 ```
 
 ## Model Details
 
-- **Model**: Random Forest classifier trained on Iris dataset
-- **Input**: Sepal length, sepal width, petal length, petal width
-- **Output**: Species prediction with class probabilities
+- **Model**: Linear Regression trained on Medical Cost Personal Dataset
+- **Input**: Age, sex, BMI, children, smoker status, US region
+- **Output**: Predicted insurance charges with feature contributions
 
-## Loading Pre-trained Models
+## Multi-Weight Loading
 
-To load a pre-trained model, specify weights directly in the decorator:
+This example demonstrates loading multiple weight files:
 
 ```python
 from thalamus_serve import Thalamus, S3Weight
@@ -40,13 +66,21 @@ from thalamus_serve import Thalamus, S3Weight
 app = Thalamus()
 
 @app.model(
-    model_id="iris",
+    model_id="medical-cost",
     weights={
-        "model": S3Weight(bucket="my-models", key="iris/model.joblib"),
+        "model": S3Weight(bucket="my-models", key="medical_cost/model.joblib"),
+        "preprocessor": S3Weight(bucket="my-models", key="medical_cost/preprocessor.joblib"),
     },
 )
-class IrisClassifier:
+class MedicalCostPredictor:
     def load(self, weights: dict[str, Path], device: str) -> None:
         import joblib
-        self.model = joblib.load(weights["model"])
+
+        # Load from separate files
+        model_data = joblib.load(weights["model"])
+        preprocessor_data = joblib.load(weights["preprocessor"])
+
+        self._model = model_data["model"]
+        self._feature_columns = preprocessor_data["feature_columns"]
+        self._encoders = preprocessor_data["encoders"]
 ```
