@@ -320,14 +320,21 @@ class WeightCache:
         return freed
 
     def clear(self) -> tuple[int, int]:
-        """Clear all cached files.
+        """Clear all cached files including subdirectories.
+
+        Clears thalamus cache files, S3 prefix directories, HTTP URL directories,
+        and HuggingFace cache.
 
         Returns:
             Tuple of (bytes_freed, files_deleted).
         """
+        import shutil
+
         with self._lock:
             total_bytes = 0
             total_files = 0
+
+            # Clear files directly in cache directory
             for f in self._cache_dir.iterdir():
                 if f.is_file():
                     try:
@@ -336,6 +343,47 @@ class WeightCache:
                         total_files += 1
                     except OSError:
                         pass
+
+            # Clear S3 prefix directories
+            s3_prefix_dir = self._cache_dir / "s3_prefixes"
+            if s3_prefix_dir.exists():
+                for d in s3_prefix_dir.iterdir():
+                    if d.is_dir():
+                        try:
+                            for f in d.rglob("*"):
+                                if f.is_file():
+                                    total_bytes += f.stat().st_size
+                                    total_files += 1
+                            shutil.rmtree(d)
+                        except OSError:
+                            pass
+
+            # Clear HTTP URL directories
+            http_urls_dir = self._cache_dir / "http_urls"
+            if http_urls_dir.exists():
+                for d in http_urls_dir.iterdir():
+                    if d.is_dir():
+                        try:
+                            for f in d.rglob("*"):
+                                if f.is_file():
+                                    total_bytes += f.stat().st_size
+                                    total_files += 1
+                            shutil.rmtree(d)
+                        except OSError:
+                            pass
+
+            # Clear HuggingFace cache
+            hf_dir = self._cache_dir / "huggingface"
+            if hf_dir.exists():
+                try:
+                    for f in hf_dir.rglob("*"):
+                        if f.is_file():
+                            total_bytes += f.stat().st_size
+                            total_files += 1
+                    shutil.rmtree(hf_dir)
+                except OSError:
+                    pass
+
             self._hit_count = 0
             self._miss_count = 0
             return (total_bytes, total_files)
