@@ -151,14 +151,14 @@ the decorator:
 
 ```python
 @app.model(
-    model_id="doc-type",
+    model_id="image-classifier",
     input_type=Input,
     output_type=Output,
     max_batch_size=32,
     ideal_batch_size=16,
     max_concurrent_requests=2,
 )
-class DocTypeClassifier:
+class ImageClassifier:
     ...
 ```
 
@@ -178,7 +178,7 @@ method:
 ```python
 from thalamus_serve import ModelCapacity, get_gpu_memory
 
-class DocTypeClassifier:
+class ImageClassifier:
     def capacity(self) -> ModelCapacity:
         used_mb, total_mb = get_gpu_memory(self.device) or (0.0, 1.0)
         headroom = 1.0 - (used_mb / total_mb)
@@ -208,7 +208,7 @@ visible in `models` regardless. Querying
   "accepting": true,
   "remaining_requests": 2,
   "models": {
-    "doc-type@2.1.0": {
+    "image-classifier@2.1.0": {
       "accepting": true,
       "remaining_requests": 2,
       "ideal_batch_size": 16,
