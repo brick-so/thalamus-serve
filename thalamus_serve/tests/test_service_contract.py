@@ -2,6 +2,7 @@ from fastapi.testclient import TestClient
 
 from thalamus_serve import (
     CacheClearResponse,
+    CapacityResponse,
     HealthResponse,
     PredictResponse,
     ReadyResponse,
@@ -43,6 +44,10 @@ class TestProtectedEndpoints:
         r = client.post(
             "/predict", json={"model": "default", "inputs": [{"data": "x"}]}
         )
+        assert r.status_code == 401
+
+    def test_capacity_requires_auth(self, client: TestClient) -> None:
+        r = client.get("/capacity")
         assert r.status_code == 401
 
     def test_cache_clear_requires_auth(self, client: TestClient) -> None:
@@ -121,6 +126,35 @@ class TestStatusContract:
         assert "available" in data.gpu
 
 
+class TestCapacityContract:
+    def test_response_schema(self, client: TestClient) -> None:
+        r = client.get("/capacity", headers=TEST_API_KEY_HEADER)
+        assert r.status_code == 200
+        data = CapacityResponse.model_validate(r.json())
+        assert len(data.models) >= 1
+
+    def test_model_capacity_fields(self, client: TestClient) -> None:
+        r = client.get("/capacity", headers=TEST_API_KEY_HEADER)
+        data = CapacityResponse.model_validate(r.json())
+        for key, cap in data.models.items():
+            assert "@" in key
+            assert cap.max_batch_size >= 1
+            assert 1 <= cap.ideal_batch_size <= cap.max_batch_size
+            assert cap.remaining_requests >= 0
+
+    def test_includes_inflight_and_uptime(self, client: TestClient) -> None:
+        r = client.get("/capacity", headers=TEST_API_KEY_HEADER)
+        data = CapacityResponse.model_validate(r.json())
+        assert data.inflight_requests == 0
+        assert data.uptime_seconds >= 0
+
+    def test_default_model_accepts(self, client: TestClient) -> None:
+        r = client.get("/capacity", headers=TEST_API_KEY_HEADER)
+        data = CapacityResponse.model_validate(r.json())
+        assert data.accepting is True
+        assert data.remaining_requests >= 1
+
+
 class TestMetricsContract:
     def test_prometheus_format(self, client: TestClient) -> None:
         r = client.get("/metrics")
@@ -151,6 +185,10 @@ class TestMetricsContract:
     def test_inference_latency_metric_exists(self, client: TestClient) -> None:
         r = client.get("/metrics")
         assert "thalamus_inference_seconds" in r.text
+
+    def test_inflight_metric_exists(self, client: TestClient) -> None:
+        r = client.get("/metrics")
+        assert "thalamus_inflight_requests" in r.text
 
 
 class TestSchemaContract:
