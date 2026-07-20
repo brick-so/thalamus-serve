@@ -234,11 +234,11 @@ device allocation and hooks:
 app = Thalamus()
 
 @app.model(
-    model_id="dtd", default=True, device="cuda",
+    model_id="image-classifier", default=True, device="cuda",
     input_type=Input, output_type=Output,
     weights={"checkpoint": S3Weight(bucket="...", key="...")},
 )
-class AnomalyDetector: ...
+class ImageClassifier: ...
 
 def create_app():
     return app.sagemaker_app()
