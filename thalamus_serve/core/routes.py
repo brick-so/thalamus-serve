@@ -74,6 +74,52 @@ class RouteContext:
             return self._inflight
 
 
+def _static_capacity(m: ModelSpec, inflight: int) -> ModelCapacity:
+    if m.instance is None:
+        return ModelCapacity(
+            accepting=False,
+            remaining_requests=0,
+            ideal_batch_size=m.ideal_batch_size,
+            max_batch_size=m.max_batch_size,
+            reason="model_not_loaded",
+        )
+
+    if not getattr(m.instance, "is_ready", True):
+        return ModelCapacity(
+            accepting=False,
+            remaining_requests=0,
+            ideal_batch_size=m.ideal_batch_size,
+            max_batch_size=m.max_batch_size,
+            reason="model_not_ready",
+        )
+
+    remaining = max(m.max_concurrent_requests - inflight, 0)
+    return ModelCapacity(
+        accepting=remaining > 0,
+        remaining_requests=remaining,
+        ideal_batch_size=m.ideal_batch_size,
+        max_batch_size=m.max_batch_size,
+        reason=None if remaining > 0 else "at_capacity",
+    )
+
+
+def _model_capacity(m: ModelSpec, inflight: int) -> ModelCapacity:
+    if m.instance is None or not m.has_capacity:
+        return _static_capacity(m, inflight)
+
+    try:
+        return ModelCapacity.model_validate(m.instance.capacity())
+    except Exception:
+        log.exception("capacity_hook_error", model=m.id, version=m.version)
+        return ModelCapacity(
+            accepting=False,
+            remaining_requests=0,
+            ideal_batch_size=m.ideal_batch_size,
+            max_batch_size=m.max_batch_size,
+            reason="capacity_hook_error",
+        )
+
+
 def create_routes(ctx: RouteContext) -> APIRouter:
     r = APIRouter()
     registry = ctx.registry
@@ -171,50 +217,6 @@ def create_routes(ctx: RouteContext) -> APIRouter:
             gpu=gpu_status,
             uptime_seconds=round(ctx.get_uptime(), 2),
         )
-
-    def _static_capacity(m: ModelSpec, inflight: int) -> ModelCapacity:
-        if m.instance is None:
-            return ModelCapacity(
-                accepting=False,
-                remaining_requests=0,
-                ideal_batch_size=m.ideal_batch_size,
-                max_batch_size=m.max_batch_size,
-                reason="model_not_loaded",
-            )
-
-        if not getattr(m.instance, "is_ready", True):
-            return ModelCapacity(
-                accepting=False,
-                remaining_requests=0,
-                ideal_batch_size=m.ideal_batch_size,
-                max_batch_size=m.max_batch_size,
-                reason="model_not_ready",
-            )
-
-        remaining = max(m.max_concurrent_requests - inflight, 0)
-        return ModelCapacity(
-            accepting=remaining > 0,
-            remaining_requests=remaining,
-            ideal_batch_size=m.ideal_batch_size,
-            max_batch_size=m.max_batch_size,
-            reason=None if remaining > 0 else "at_capacity",
-        )
-
-    def _model_capacity(m: ModelSpec, inflight: int) -> ModelCapacity:
-        if m.instance is None or not m.has_capacity:
-            return _static_capacity(m, inflight)
-
-        try:
-            return ModelCapacity.model_validate(m.instance.capacity())
-        except Exception:
-            log.exception("capacity_hook_error", model=m.id, version=m.version)
-            return ModelCapacity(
-                accepting=False,
-                remaining_requests=0,
-                ideal_batch_size=m.ideal_batch_size,
-                max_batch_size=m.max_batch_size,
-                reason="capacity_hook_error",
-            )
 
     @r.get("/capacity", response_model=CapacityResponse)
     def capacity() -> CapacityResponse:
