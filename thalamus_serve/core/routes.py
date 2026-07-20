@@ -27,7 +27,9 @@ from thalamus_serve.observability.metrics import (
 from thalamus_serve.schemas.api import (
     CacheClearResponse,
     CacheInfo,
+    CapacityResponse,
     HealthResponse,
+    ModelCapacity,
     ModelStatus,
     PredictMeta,
     PredictRequest,
@@ -167,6 +169,79 @@ def create_routes(ctx: RouteContext) -> APIRouter:
             models=statuses,
             cache=cache_info,
             gpu=gpu_status,
+            uptime_seconds=round(ctx.get_uptime(), 2),
+        )
+
+    def _static_capacity(m: ModelSpec, inflight: int) -> ModelCapacity:
+        if m.instance is None:
+            return ModelCapacity(
+                accepting=False,
+                remaining_requests=0,
+                ideal_batch_size=m.ideal_batch_size,
+                max_batch_size=m.max_batch_size,
+                reason="model_not_loaded",
+            )
+
+        if not getattr(m.instance, "is_ready", True):
+            return ModelCapacity(
+                accepting=False,
+                remaining_requests=0,
+                ideal_batch_size=m.ideal_batch_size,
+                max_batch_size=m.max_batch_size,
+                reason="model_not_ready",
+            )
+
+        remaining = max(m.max_concurrent_requests - inflight, 0)
+        return ModelCapacity(
+            accepting=remaining > 0,
+            remaining_requests=remaining,
+            ideal_batch_size=m.ideal_batch_size,
+            max_batch_size=m.max_batch_size,
+            reason=None if remaining > 0 else "at_capacity",
+        )
+
+    def _model_capacity(m: ModelSpec, inflight: int) -> ModelCapacity:
+        if m.instance is None or not m.has_capacity:
+            return _static_capacity(m, inflight)
+
+        try:
+            return ModelCapacity.model_validate(m.instance.capacity())
+        except Exception:
+            log.exception("capacity_hook_error", model=m.id, version=m.version)
+            return ModelCapacity(
+                accepting=False,
+                remaining_requests=0,
+                ideal_batch_size=m.ideal_batch_size,
+                max_batch_size=m.max_batch_size,
+                reason="capacity_hook_error",
+            )
+
+    @r.get("/capacity", response_model=CapacityResponse)
+    def capacity() -> CapacityResponse:
+        inflight = ctx.inflight()
+        models: dict[str, ModelCapacity] = {}
+        accepting_all = True
+        bottleneck: int | None = None
+
+        for m in registry.all():
+            cap = _model_capacity(m, inflight)
+            models[f"{m.id}@{m.version}"] = cap
+
+            if m.is_critical and not cap.accepting:
+                accepting_all = False
+
+            if cap.accepting:
+                bottleneck = (
+                    cap.remaining_requests
+                    if bottleneck is None
+                    else min(bottleneck, cap.remaining_requests)
+                )
+
+        return CapacityResponse(
+            accepting=accepting_all,
+            remaining_requests=bottleneck if bottleneck is not None else 0,
+            models=models,
+            inflight_requests=inflight,
             uptime_seconds=round(ctx.get_uptime(), 2),
         )
 

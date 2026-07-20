@@ -1,10 +1,14 @@
+from collections.abc import Generator
+
 import pytest
+from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
 from thalamus_serve import CapacityResponse, ModelCapacity
 from thalamus_serve.core.app import Thalamus
 from thalamus_serve.core.model import ModelRegistry
 from thalamus_serve.core.routes import RouteContext
+from thalamus_serve.testing import TEST_API_KEY, TEST_API_KEY_HEADER
 
 
 class CapInput(BaseModel):
@@ -125,3 +129,185 @@ class TestInflightTracking:
         with pytest.raises(RuntimeError), ctx.track_inflight():
             raise RuntimeError("boom")
         assert ctx.inflight() == 0
+
+
+capacity_app = Thalamus(name="capacity-app", lazy_load=True)
+
+
+@capacity_app.model(
+    model_id="static",
+    version="1.0.0",
+    default=True,
+    default_version=True,
+    input_type=CapInput,
+    output_type=CapOutput,
+    max_batch_size=32,
+    ideal_batch_size=16,
+    max_concurrent_requests=2,
+)
+class StaticModel:
+    @property
+    def is_ready(self) -> bool:
+        return True
+
+    def predict(self, inputs: list[CapInput]) -> list[CapOutput]:
+        return [CapOutput(result=i.data) for i in inputs]
+
+
+@capacity_app.model(
+    model_id="dynamic",
+    version="1.0.0",
+    critical=False,
+    input_type=CapInput,
+    output_type=CapOutput,
+    max_batch_size=32,
+    max_concurrent_requests=8,
+)
+class DynamicModel:
+    @property
+    def is_ready(self) -> bool:
+        return True
+
+    def capacity(self) -> ModelCapacity:
+        return ModelCapacity(
+            accepting=True,
+            remaining_requests=5,
+            ideal_batch_size=4,
+            max_batch_size=8,
+            reason="vram_headroom_low",
+        )
+
+    def predict(self, inputs: list[CapInput]) -> list[CapOutput]:
+        return [CapOutput(result=i.data) for i in inputs]
+
+
+@capacity_app.model(
+    model_id="broken",
+    version="1.0.0",
+    critical=False,
+    input_type=CapInput,
+    output_type=CapOutput,
+    max_batch_size=4,
+    max_concurrent_requests=4,
+)
+class BrokenHookModel:
+    @property
+    def is_ready(self) -> bool:
+        return True
+
+    def capacity(self) -> ModelCapacity:
+        raise RuntimeError("gauge unavailable")
+
+    def predict(self, inputs: list[CapInput]) -> list[CapOutput]:
+        return [CapOutput(result=i.data) for i in inputs]
+
+
+@capacity_app.model(
+    model_id="unloaded",
+    version="1.0.0",
+    critical=False,
+    input_type=CapInput,
+    output_type=CapOutput,
+    max_batch_size=8,
+    max_concurrent_requests=4,
+)
+class UnloadedModel:
+    def predict(self, inputs: list[CapInput]) -> list[CapOutput]:
+        return [CapOutput(result=i.data) for i in inputs]
+
+
+@pytest.fixture
+def capacity_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Generator[TestClient, None, None]:
+    monkeypatch.setenv("THALAMUS_API_KEY", TEST_API_KEY)
+    with TestClient(capacity_app) as c:
+        for spec in capacity_app._registry.all():
+            if spec.id != "unloaded":
+                capacity_app._ensure_loaded(spec)
+        yield c
+
+
+def _get_capacity(client: TestClient) -> CapacityResponse:
+    r = client.get("/capacity", headers=TEST_API_KEY_HEADER)
+    assert r.status_code == 200
+    return CapacityResponse.model_validate(r.json())
+
+
+class TestCapacityEndpoint:
+    def test_requires_auth(self, capacity_client: TestClient) -> None:
+        assert capacity_client.get("/capacity").status_code == 401
+
+    def test_static_model_reports_declared_numbers(
+        self, capacity_client: TestClient
+    ) -> None:
+        cap = _get_capacity(capacity_client).models["static@1.0.0"]
+        assert cap.accepting is True
+        assert cap.remaining_requests == 2
+        assert cap.ideal_batch_size == 16
+        assert cap.max_batch_size == 32
+        assert cap.reason is None
+
+    def test_dynamic_hook_wins_over_static(self, capacity_client: TestClient) -> None:
+        cap = _get_capacity(capacity_client).models["dynamic@1.0.0"]
+        assert cap.remaining_requests == 5
+        assert cap.ideal_batch_size == 4
+        assert cap.max_batch_size == 8
+        assert cap.reason == "vram_headroom_low"
+
+    def test_raising_hook_is_not_accepting(self, capacity_client: TestClient) -> None:
+        cap = _get_capacity(capacity_client).models["broken@1.0.0"]
+        assert cap.accepting is False
+        assert cap.remaining_requests == 0
+        assert cap.reason == "capacity_hook_error"
+
+    def test_unloaded_model_reports_not_loaded(
+        self, capacity_client: TestClient
+    ) -> None:
+        cap = _get_capacity(capacity_client).models["unloaded@1.0.0"]
+        assert cap.accepting is False
+        assert cap.remaining_requests == 0
+        assert cap.reason == "model_not_loaded"
+
+    def test_unloaded_non_critical_model_does_not_flip_accepting(
+        self, capacity_client: TestClient
+    ) -> None:
+        assert _get_capacity(capacity_client).accepting is True
+
+    def test_does_not_load_lazy_model(self, capacity_client: TestClient) -> None:
+        _get_capacity(capacity_client)
+        spec = capacity_app._registry.get("unloaded", "1.0.0")
+        assert spec is not None
+        assert spec.instance is None
+
+    def test_remaining_requests_is_bottleneck(
+        self, capacity_client: TestClient
+    ) -> None:
+        assert _get_capacity(capacity_client).remaining_requests == 2
+
+    def test_reports_inflight_count(self, capacity_client: TestClient) -> None:
+        assert _get_capacity(capacity_client).inflight_requests == 0
+
+    def test_at_capacity_when_inflight_exhausts_slots(
+        self, capacity_client: TestClient
+    ) -> None:
+        ctx = capacity_app._route_context
+        assert ctx is not None
+        with ctx.track_inflight(), ctx.track_inflight():
+            body = _get_capacity(capacity_client)
+        cap = body.models["static@1.0.0"]
+        assert body.inflight_requests == 2
+        assert cap.accepting is False
+        assert cap.remaining_requests == 0
+        assert cap.reason == "at_capacity"
+
+    def test_top_level_not_accepting_when_critical_at_capacity(
+        self, capacity_client: TestClient
+    ) -> None:
+        ctx = capacity_app._route_context
+        assert ctx is not None
+        with ctx.track_inflight(), ctx.track_inflight():
+            assert _get_capacity(capacity_client).accepting is False
+
+    def test_uptime_is_reported(self, capacity_client: TestClient) -> None:
+        assert _get_capacity(capacity_client).uptime_seconds >= 0

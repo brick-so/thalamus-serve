@@ -74,6 +74,7 @@ class Thalamus:
         self._lazy_load = lazy_load
         self._registry = ModelRegistry()
         self._app: FastAPI | None = None
+        self._route_context: RouteContext | None = None
         self._start_time: float = 0.0
         self._load_lock = Lock()
 
@@ -241,6 +242,7 @@ class Thalamus:
             ensure_loaded=self._ensure_loaded,
             get_uptime=self.get_uptime,
         )
+        self._route_context = ctx
         app.include_router(create_routes(ctx))
         return app
 
