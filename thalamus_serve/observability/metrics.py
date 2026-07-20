@@ -43,6 +43,11 @@ POSTPROCESSING_LATENCY = Histogram(
     buckets=[0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5],
 )
 
+INFLIGHT_REQUESTS = Gauge(
+    "thalamus_inflight_requests",
+    "Predict requests currently in flight",
+)
+
 MODELS_LOADED = Gauge(
     "thalamus_models_loaded",
     "Number of loaded models",

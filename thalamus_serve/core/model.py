@@ -41,7 +41,9 @@ class ModelSpec:
                 f"{model_id}: max_concurrent_requests must be >= 1, "
                 f"got {max_concurrent_requests}"
             )
-        resolved_ideal = max_batch_size if ideal_batch_size is None else ideal_batch_size
+        resolved_ideal = (
+            max_batch_size if ideal_batch_size is None else ideal_batch_size
+        )
         if not 1 <= resolved_ideal <= max_batch_size:
             raise ValueError(
                 f"{model_id}: ideal_batch_size must be between 1 and "
