@@ -15,6 +15,7 @@ from thalamus_serve.config import WeightSource
 from thalamus_serve.core.middleware import APIKeyAuth
 from thalamus_serve.core.model import ModelRegistry, ModelSpec
 from thalamus_serve.core.routes import RouteContext, create_routes
+from thalamus_serve.core.sagemaker import Envelope, build_sagemaker_app
 from thalamus_serve.infra.gpu import GPUAllocator
 from thalamus_serve.observability.logging import log
 from thalamus_serve.observability.logging import setup as setup_logging
@@ -151,6 +152,53 @@ class Thalamus:
             return cls
 
         return decorator
+
+    def sagemaker_app(
+        self,
+        *,
+        model_id: str | None = None,
+        version: str | None = None,
+        envelope: Envelope = "bare",
+    ) -> FastAPI:
+        """Build a SageMaker BYOC serving app for one registered model.
+
+        SageMaker endpoints serve a single model, so this resolves one spec,
+        loads it, and exposes `GET /ping` + `POST /invocations`. Only the served
+        model is loaded — siblings registered on the same app stay untouched.
+
+        The returned app has no API-key middleware: SageMaker sends no
+        credentials, and the endpoint is reached through AWS IAM instead.
+
+        Args:
+            model_id: Model to serve. Defaults to the registered default model.
+            version: Version to serve. Defaults to the default version.
+            envelope: `"bare"` returns the output object itself;
+                `"predict_response"` wraps it in `PredictResponse`.
+
+        Returns:
+            A FastAPI application to run on port 8080.
+
+        Raises:
+            ValueError: If the requested model is not registered, or no
+                `model_id` was given and no default model exists.
+        """
+        if model_id is None:
+            spec = self._registry.get_default()
+            if spec is None:
+                raise ValueError(
+                    "sagemaker_app() requires a model_id: no default model is "
+                    "registered"
+                )
+        else:
+            spec = self._registry.get(model_id, version)
+            if spec is None:
+                raise ValueError(
+                    f"Model not found: {model_id}@{version or 'latest'}"
+                )
+
+        setup_logging(os.environ.get("THALAMUS_LOG_LEVEL", self._log_level))
+        self._ensure_loaded(spec)
+        return build_sagemaker_app(spec, envelope=envelope)
 
     def _load_model(self, spec: ModelSpec) -> None:
         if spec.instance is not None:
