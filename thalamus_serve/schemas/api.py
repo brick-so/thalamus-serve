@@ -80,3 +80,19 @@ class UnloadResponse(BaseModel):
 class ReadyResponse(BaseModel):
     ready: bool
     models: list[ModelStatus]
+
+
+class ModelCapacity(BaseModel):
+    accepting: bool = True
+    remaining_requests: int
+    ideal_batch_size: int
+    max_batch_size: int
+    reason: str | None = None
+
+
+class CapacityResponse(BaseModel):
+    accepting: bool
+    remaining_requests: int
+    models: dict[str, ModelCapacity]
+    inflight_requests: int
+    uptime_seconds: float

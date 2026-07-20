@@ -46,7 +46,9 @@ from thalamus_serve.infra.gpu import (
 from thalamus_serve.schemas.api import (
     CacheClearResponse,
     CacheInfo,
+    CapacityResponse,
     HealthResponse,
+    ModelCapacity,
     PredictRequest,
     PredictResponse,
     ReadyResponse,
@@ -87,6 +89,8 @@ __all__ = [
     "PredictRequest",
     "PredictResponse",
     "StatusResponse",
+    "CapacityResponse",
+    "ModelCapacity",
     "CacheInfo",
     "CacheClearResponse",
     "UnloadRequest",
