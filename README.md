@@ -197,7 +197,9 @@ run inference. A hook that raises is reported as `accepting=false` with
 
 The response aggregates across models. Top-level `accepting` is the AND over **critical**
 models, so an unloaded non-critical model does not mark the pod unavailable. Top-level
-`remaining_requests` is the minimum across accepting models — the bottleneck. Querying
+`remaining_requests` is the minimum across accepting models — the bottleneck — and is `0`
+whenever `accepting` is false, so the two can never disagree. Per-model slot counts stay
+visible in `models` regardless. Querying
 `/capacity` never triggers a lazy model load; an unloaded model reports
 `reason="model_not_loaded"`.
 

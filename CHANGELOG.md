@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `GET /capacity` endpoint reporting, per model, how many more requests the deployment
   will accept and its ideal batch size. Requires authentication. Aggregates to a
   top-level `accepting` (AND over critical models) and `remaining_requests` (the
-  minimum across accepting models). Querying it never triggers a lazy model load.
+  minimum across accepting models, forced to 0 whenever `accepting` is false). Querying
+  it never triggers a lazy model load.
 - `max_batch_size`, `ideal_batch_size`, and `max_concurrent_requests` parameters on the
   `@app.model()` decorator, stored on `ModelSpec`. All default conservatively to 1 and
   are validated at import time — `ideal_batch_size` must fall within

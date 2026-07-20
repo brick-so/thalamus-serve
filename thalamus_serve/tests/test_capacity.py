@@ -309,5 +309,16 @@ class TestCapacityEndpoint:
         with ctx.track_inflight(), ctx.track_inflight():
             assert _get_capacity(capacity_client).accepting is False
 
+    def test_remaining_requests_is_zero_when_not_accepting(
+        self, capacity_client: TestClient
+    ) -> None:
+        ctx = capacity_app._route_context
+        assert ctx is not None
+        with ctx.track_inflight(), ctx.track_inflight():
+            body = _get_capacity(capacity_client)
+        assert body.accepting is False
+        assert body.remaining_requests == 0
+        assert body.models["dynamic@1.0.0"].remaining_requests == 5
+
     def test_uptime_is_reported(self, capacity_client: TestClient) -> None:
         assert _get_capacity(capacity_client).uptime_seconds >= 0

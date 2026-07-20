@@ -241,7 +241,7 @@ def create_routes(ctx: RouteContext) -> APIRouter:
 
         return CapacityResponse(
             accepting=accepting_all,
-            remaining_requests=bottleneck if bottleneck is not None else 0,
+            remaining_requests=bottleneck if accepting_all and bottleneck else 0,
             models=models,
             inflight_requests=inflight,
             uptime_seconds=round(ctx.get_uptime(), 2),
