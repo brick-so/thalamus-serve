@@ -45,6 +45,12 @@ uv run uvicorn examples.vanilla.vanilla:app --host 0.0.0.0 --port 8000
   - `/predict` - Batch inference (requires auth)
   - `/cache/clear`, `/models/{model_id}/unload` - Management (requires auth)
 
+- **SageMaker** (`core/sagemaker.py`): `build_sagemaker_app(spec)` exposes the BYOC
+  contract (`GET /ping`, `POST /invocations`, port 8080, no auth) for a single model.
+  Reached via `Thalamus.sagemaker_app()`, which resolves and loads one registered
+  model. `is_ready` is read as a property and `predict` is offloaded with
+  `asyncio.to_thread` — both are regression-tested; see the README.
+
 ### Infrastructure
 
 - **Weight Fetching** (`storage/fetch.py`): Downloads model weights from S3, HuggingFace Hub, or HTTP URLs. Uses an LRU cache with configurable max size.

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-20
+
+### Added
+
+- `Thalamus.sagemaker_app()` building an AWS SageMaker BYOC serving app (`GET /ping` +
+  `POST /invocations`) around an already-registered model, reusing its weights, device
+  allocation and `preprocess`/`postprocess` hooks. SageMaker endpoints serve one model,
+  so only the resolved model is loaded — siblings on the same app are untouched.
+- `build_sagemaker_app(spec, envelope=...)` in `thalamus_serve.core.sagemaker`, taking a
+  spec with an already-set instance so the serving layer is testable without weights,
+  GPU or network.
+- `envelope="predict_response"` to wrap `/invocations` output in `PredictResponse`. The
+  default, `"bare"`, returns the output object itself.
+
+### Notes
+
+- The SageMaker app intentionally has no API-key middleware: SageMaker sends no
+  credentials and access is controlled by AWS IAM.
+- Malformed or schema-invalid request bodies return `400`; SageMaker interprets `500` as
+  a ModelError. Model failures return `500` with a generic message, details logged only.
+
 ## [0.3.0] - 2026-07-20
 
 ### Added
@@ -86,7 +107,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - API key required for protected endpoints
 - Configurable via `THALAMUS_API_KEY` environment variable
 
-[Unreleased]: https://github.com/brick-so/thalamus-serve/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/brick-so/thalamus-serve/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/brick-so/thalamus-serve/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/brick-so/thalamus-serve/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/brick-so/thalamus-serve/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/brick-so/thalamus-serve/releases/tag/v0.1.0
