@@ -1,5 +1,7 @@
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from threading import Lock
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import PlainTextResponse
@@ -15,6 +17,7 @@ from thalamus_serve.observability.metrics import (
     GPU_MEMORY_TOTAL_MB,
     GPU_MEMORY_USED_MB,
     INFERENCE_LATENCY,
+    INFLIGHT_REQUESTS,
     LATENCY,
     MODELS_LOADED,
     POSTPROCESSING_LATENCY,
@@ -24,7 +27,9 @@ from thalamus_serve.observability.metrics import (
 from thalamus_serve.schemas.api import (
     CacheClearResponse,
     CacheInfo,
+    CapacityResponse,
     HealthResponse,
+    ModelCapacity,
     ModelStatus,
     PredictMeta,
     PredictRequest,
@@ -48,6 +53,71 @@ class RouteContext:
         self.registry = registry
         self.ensure_loaded = ensure_loaded
         self.get_uptime = get_uptime
+        self._inflight = 0
+        self._inflight_lock = Lock()
+
+    @contextmanager
+    def track_inflight(self) -> Iterator[int]:
+        with self._inflight_lock:
+            self._inflight += 1
+            current = self._inflight
+        INFLIGHT_REQUESTS.inc()
+        try:
+            yield current
+        finally:
+            with self._inflight_lock:
+                self._inflight -= 1
+            INFLIGHT_REQUESTS.dec()
+
+    def inflight(self) -> int:
+        with self._inflight_lock:
+            return self._inflight
+
+
+def _static_capacity(m: ModelSpec, inflight: int) -> ModelCapacity:
+    if m.instance is None:
+        return ModelCapacity(
+            accepting=False,
+            remaining_requests=0,
+            ideal_batch_size=m.ideal_batch_size,
+            max_batch_size=m.max_batch_size,
+            reason="model_not_loaded",
+        )
+
+    if not getattr(m.instance, "is_ready", True):
+        return ModelCapacity(
+            accepting=False,
+            remaining_requests=0,
+            ideal_batch_size=m.ideal_batch_size,
+            max_batch_size=m.max_batch_size,
+            reason="model_not_ready",
+        )
+
+    remaining = max(m.max_concurrent_requests - inflight, 0)
+    return ModelCapacity(
+        accepting=remaining > 0,
+        remaining_requests=remaining,
+        ideal_batch_size=m.ideal_batch_size,
+        max_batch_size=m.max_batch_size,
+        reason=None if remaining > 0 else "at_capacity",
+    )
+
+
+def _model_capacity(m: ModelSpec, inflight: int) -> ModelCapacity:
+    if m.instance is None or not m.has_capacity:
+        return _static_capacity(m, inflight)
+
+    try:
+        return ModelCapacity.model_validate(m.instance.capacity())
+    except Exception:
+        log.exception("capacity_hook_error", model=m.id, version=m.version)
+        return ModelCapacity(
+            accepting=False,
+            remaining_requests=0,
+            ideal_batch_size=m.ideal_batch_size,
+            max_batch_size=m.max_batch_size,
+            reason="capacity_hook_error",
+        )
 
 
 def create_routes(ctx: RouteContext) -> APIRouter:
@@ -148,6 +218,35 @@ def create_routes(ctx: RouteContext) -> APIRouter:
             uptime_seconds=round(ctx.get_uptime(), 2),
         )
 
+    @r.get("/capacity", response_model=CapacityResponse)
+    def capacity() -> CapacityResponse:
+        inflight = ctx.inflight()
+        models: dict[str, ModelCapacity] = {}
+        accepting_all = True
+        bottleneck: int | None = None
+
+        for m in registry.all():
+            cap = _model_capacity(m, inflight)
+            models[f"{m.id}@{m.version}"] = cap
+
+            if m.is_critical and not cap.accepting:
+                accepting_all = False
+
+            if cap.accepting:
+                bottleneck = (
+                    cap.remaining_requests
+                    if bottleneck is None
+                    else min(bottleneck, cap.remaining_requests)
+                )
+
+        return CapacityResponse(
+            accepting=accepting_all,
+            remaining_requests=bottleneck if accepting_all and bottleneck else 0,
+            models=models,
+            inflight_requests=inflight,
+            uptime_seconds=round(ctx.get_uptime(), 2),
+        )
+
     @r.get("/metrics", response_class=PlainTextResponse)
     def metrics() -> PlainTextResponse:
         return PlainTextResponse(generate_latest(), media_type=CONTENT_TYPE_LATEST)
@@ -203,59 +302,68 @@ def create_routes(ctx: RouteContext) -> APIRouter:
                     404, f"Model not found: {req.model}@{req.version or 'latest'}"
                 )
 
-        ctx.ensure_loaded(m)
+        with ctx.track_inflight():
+            ctx.ensure_loaded(m)
 
-        inputs = [m.input_type.model_validate(i) for i in req.inputs]
+            inputs = [m.input_type.model_validate(i) for i in req.inputs]
 
-        preprocessing_ms: float | None = None
-        postprocessing_ms: float | None = None
+            preprocessing_ms: float | None = None
+            postprocessing_ms: float | None = None
 
-        start_total = time.perf_counter()
+            start_total = time.perf_counter()
 
-        if m.has_preprocess:
-            start_pre = time.perf_counter()
-            inputs = m.instance.preprocess(inputs)
-            preprocessing_ms = round((time.perf_counter() - start_pre) * 1000, 2)
-            PREPROCESSING_LATENCY.labels(model=m.id).observe(preprocessing_ms / 1000)
+            if m.has_preprocess:
+                start_pre = time.perf_counter()
+                inputs = m.instance.preprocess(inputs)
+                preprocessing_ms = round((time.perf_counter() - start_pre) * 1000, 2)
+                PREPROCESSING_LATENCY.labels(model=m.id).observe(
+                    preprocessing_ms / 1000
+                )
 
-        start_infer = time.perf_counter()
-        try:
-            outputs = m.instance.predict(inputs)
-            REQUESTS.labels(model=m.id, status="ok").inc()
-        except Exception as e:
-            REQUESTS.labels(model=m.id, status="error").inc()
-            log.exception("predict_error", model=m.id)
-            raise HTTPException(500, str(e)) from e
+            start_infer = time.perf_counter()
+            try:
+                outputs = m.instance.predict(inputs)
+                REQUESTS.labels(model=m.id, status="ok").inc()
+            except Exception as e:
+                REQUESTS.labels(model=m.id, status="error").inc()
+                log.exception("predict_error", model=m.id)
+                raise HTTPException(500, str(e)) from e
 
-        inference_ms = round((time.perf_counter() - start_infer) * 1000, 2)
-        INFERENCE_LATENCY.labels(model=m.id).observe(inference_ms / 1000)
+            inference_ms = round((time.perf_counter() - start_infer) * 1000, 2)
+            INFERENCE_LATENCY.labels(model=m.id).observe(inference_ms / 1000)
 
-        if m.has_postprocess:
-            start_post = time.perf_counter()
-            outputs = m.instance.postprocess(outputs)
-            postprocessing_ms = round((time.perf_counter() - start_post) * 1000, 2)
-            POSTPROCESSING_LATENCY.labels(model=m.id).observe(postprocessing_ms / 1000)
+            if m.has_postprocess:
+                start_post = time.perf_counter()
+                outputs = m.instance.postprocess(outputs)
+                postprocessing_ms = round((time.perf_counter() - start_post) * 1000, 2)
+                POSTPROCESSING_LATENCY.labels(model=m.id).observe(
+                    postprocessing_ms / 1000
+                )
 
-        total_ms = round((time.perf_counter() - start_total) * 1000, 2)
-        LATENCY.labels(model=m.id).observe(total_ms / 1000)
-        BATCH_SIZE.labels(model=m.id).observe(len(req.inputs))
+            total_ms = round((time.perf_counter() - start_total) * 1000, 2)
+            LATENCY.labels(model=m.id).observe(total_ms / 1000)
+            BATCH_SIZE.labels(model=m.id).observe(len(req.inputs))
 
-        log.info(
-            "predict", model=m.id, version=m.version, batch=len(req.inputs), ms=total_ms
-        )
-
-        return PredictResponse(
-            outputs=[o.model_dump() for o in outputs],
-            meta=PredictMeta(
+            log.info(
+                "predict",
                 model=m.id,
                 version=m.version,
-                latency_ms=total_ms,
-                batch_size=len(req.inputs),
-                preprocessing_ms=preprocessing_ms,
-                inference_ms=inference_ms,
-                postprocessing_ms=postprocessing_ms,
-            ),
-        )
+                batch=len(req.inputs),
+                ms=total_ms,
+            )
+
+            return PredictResponse(
+                outputs=[o.model_dump() for o in outputs],
+                meta=PredictMeta(
+                    model=m.id,
+                    version=m.version,
+                    latency_ms=total_ms,
+                    batch_size=len(req.inputs),
+                    preprocessing_ms=preprocessing_ms,
+                    inference_ms=inference_ms,
+                    postprocessing_ms=postprocessing_ms,
+                ),
+            )
 
     @r.post("/cache/clear", response_model=CacheClearResponse)
     def clear_cache() -> CacheClearResponse:

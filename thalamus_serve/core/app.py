@@ -74,6 +74,7 @@ class Thalamus:
         self._lazy_load = lazy_load
         self._registry = ModelRegistry()
         self._app: FastAPI | None = None
+        self._route_context: RouteContext | None = None
         self._start_time: float = 0.0
         self._load_lock = Lock()
 
@@ -90,12 +91,20 @@ class Thalamus:
         device: str = "auto",
         input_type: type,
         output_type: type,
+        max_batch_size: int = 1,
+        ideal_batch_size: int | None = None,
+        max_concurrent_requests: int = 1,
     ) -> Callable[[type], type]:
         """Decorator to register a model class with the application.
 
         The decorated class should implement a `predict` method that takes a list
         of inputs and returns a list of outputs. Optionally, it can implement
-        `load`, `preprocess`, `postprocess`, and `is_ready` methods.
+        `load`, `preprocess`, `postprocess`, `is_ready`, and `capacity` methods.
+
+        A `capacity()` method returning a ModelCapacity overrides the static
+        batch and concurrency numbers declared here whenever the model is loaded.
+        It is polled by callers before every dispatch, so it must be O(1) —
+        read a cached gauge, never run inference.
 
         Args:
             model_id: Unique identifier for the model. Defaults to class name.
@@ -110,9 +119,15 @@ class Thalamus:
             device: Device preference ("auto", "cpu", "cuda", "cuda:0", "mps").
             input_type: Pydantic model for input validation (required).
             output_type: Pydantic model for output serialization (required).
+            max_batch_size: Hard cap on inputs accepted in one /predict call.
+            ideal_batch_size: Throughput sweet spot. Defaults to max_batch_size.
+            max_concurrent_requests: Parallel /predict calls the pod tolerates.
 
         Returns:
             Decorator function that registers the class and returns it unchanged.
+
+        Raises:
+            ValueError: If the batch or concurrency bounds are inconsistent.
         """
 
         def decorator(cls: type) -> type:
@@ -128,6 +143,9 @@ class Thalamus:
                 device,
                 input_type,
                 output_type,
+                max_batch_size,
+                ideal_batch_size,
+                max_concurrent_requests,
             )
             self._registry.register(spec)
             return cls
@@ -224,6 +242,7 @@ class Thalamus:
             ensure_loaded=self._ensure_loaded,
             get_uptime=self.get_uptime,
         )
+        self._route_context = ctx
         app.include_router(create_routes(ctx))
         return app
 

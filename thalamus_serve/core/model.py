@@ -27,7 +27,29 @@ class ModelSpec:
         is_critical: bool = True,
         weights: dict[str, WeightSource] | None = None,
         device_preference: str = "auto",
+        max_batch_size: int = 1,
+        ideal_batch_size: int | None = None,
+        max_concurrent_requests: int = 1,
+        has_capacity: bool = False,
     ) -> None:
+        if max_batch_size < 1:
+            raise ValueError(
+                f"{model_id}: max_batch_size must be >= 1, got {max_batch_size}"
+            )
+        if max_concurrent_requests < 1:
+            raise ValueError(
+                f"{model_id}: max_concurrent_requests must be >= 1, "
+                f"got {max_concurrent_requests}"
+            )
+        resolved_ideal = (
+            max_batch_size if ideal_batch_size is None else ideal_batch_size
+        )
+        if not 1 <= resolved_ideal <= max_batch_size:
+            raise ValueError(
+                f"{model_id}: ideal_batch_size must be between 1 and "
+                f"max_batch_size ({max_batch_size}), got {resolved_ideal}"
+            )
+
         self.id = model_id
         self.version = version
         self.description = description
@@ -41,6 +63,10 @@ class ModelSpec:
         self.is_critical = is_critical
         self.weights = weights or {}
         self.device_preference = device_preference
+        self.max_batch_size = max_batch_size
+        self.ideal_batch_size = resolved_ideal
+        self.max_concurrent_requests = max_concurrent_requests
+        self.has_capacity = has_capacity
         self.instance: Any = None
         self.device: str | None = None
 
@@ -58,6 +84,9 @@ class ModelSpec:
         device: str,
         input_type: type[BaseModel],
         output_type: type[BaseModel],
+        max_batch_size: int = 1,
+        ideal_batch_size: int | None = None,
+        max_concurrent_requests: int = 1,
     ) -> "ModelSpec":
         """Create a ModelSpec from a model class.
 
@@ -73,9 +102,15 @@ class ModelSpec:
             device: Device preference.
             input_type: Pydantic model for input validation (required).
             output_type: Pydantic model for output serialization (required).
+            max_batch_size: Hard cap on inputs accepted in one /predict call.
+            ideal_batch_size: Throughput sweet spot. Defaults to max_batch_size.
+            max_concurrent_requests: Parallel /predict calls the pod tolerates.
 
         Returns:
             A configured ModelSpec instance.
+
+        Raises:
+            ValueError: If the batch or concurrency bounds are inconsistent.
         """
         mid = model_id or model_cls.__name__
         desc = description or model_cls.__doc__ or ""
@@ -85,6 +120,9 @@ class ModelSpec:
         )
         has_postprocess = hasattr(model_cls, "postprocess") and callable(
             getattr(model_cls, "postprocess", None)
+        )
+        has_capacity = hasattr(model_cls, "capacity") and callable(
+            getattr(model_cls, "capacity", None)
         )
 
         return cls(
@@ -101,6 +139,10 @@ class ModelSpec:
             is_critical=critical,
             weights=weights,
             device_preference=device,
+            max_batch_size=max_batch_size,
+            ideal_batch_size=ideal_batch_size,
+            max_concurrent_requests=max_concurrent_requests,
+            has_capacity=has_capacity,
         )
 
 

@@ -17,6 +17,7 @@ A Python ML model serving framework built on FastAPI with built-in observability
 - **Caching** - LRU cache for model weights with configurable size
 - **Batch Processing** - Native batch inference support
 - **Health Checks** - `/health`, `/ready`, `/status` endpoints
+- **Capacity Reporting** - `/capacity` advertises free slots and ideal batch size
 - **API Key Authentication** - Protect endpoints with API key middleware
 
 ## Installation
@@ -109,6 +110,7 @@ See the [examples/](examples/) directory for complete implementations:
 | `/ready` | GET | No | Readiness check (critical models loaded) |
 | `/status` | GET | No | Detailed status with cache/GPU info |
 | `/metrics` | GET | No | Prometheus metrics |
+| `/capacity` | GET | Yes | Remaining request slots and ideal batch size |
 | `/schema` | GET | Yes | List all model schemas |
 | `/schema/{model_id}` | GET | Yes | Get specific model schema |
 | `/predict` | POST | Yes | Run inference |
@@ -135,6 +137,88 @@ class MyModel:
     def is_ready(self) -> bool:
         """Optional. Used by /ready endpoint."""
         return True
+
+    def capacity(self) -> ModelCapacity:
+        """Optional. Used by /capacity endpoint."""
+        ...
+```
+
+## Capacity
+
+`/capacity` tells a caller how much work this deployment will accept right now, so a
+batching client can size its next dispatch instead of guessing. Declare the numbers on
+the decorator:
+
+```python
+@app.model(
+    model_id="doc-type",
+    input_type=Input,
+    output_type=Output,
+    max_batch_size=32,
+    ideal_batch_size=16,
+    max_concurrent_requests=2,
+)
+class DocTypeClassifier:
+    ...
+```
+
+| Argument | Default | Meaning |
+|----------|---------|---------|
+| `max_batch_size` | `1` | Hard cap on inputs accepted in one `/predict` call |
+| `ideal_batch_size` | `max_batch_size` | Throughput sweet spot |
+| `max_concurrent_requests` | `1` | Parallel `/predict` calls the pod tolerates |
+
+The defaults are deliberately conservative — a model that has not declared anything
+advertises a batch size of 1. `ideal_batch_size` must be between 1 and `max_batch_size`,
+and both must be at least 1; violating that raises `ValueError` at import time.
+
+A model that can measure its own headroom overrides the static numbers with a `capacity()`
+method:
+
+```python
+from thalamus_serve import ModelCapacity, get_gpu_memory
+
+class DocTypeClassifier:
+    def capacity(self) -> ModelCapacity:
+        used_mb, total_mb = get_gpu_memory(self.device) or (0.0, 1.0)
+        headroom = 1.0 - (used_mb / total_mb)
+        return ModelCapacity(
+            accepting=headroom > 0.1,
+            remaining_requests=2 if headroom > 0.4 else 1,
+            ideal_batch_size=16 if headroom > 0.4 else 4,
+            max_batch_size=32,
+            reason=None if headroom > 0.1 else "vram_headroom_low",
+        )
+```
+
+The hook is polled before every dispatch, so it must be O(1) — read a cached gauge, never
+run inference. A hook that raises is reported as `accepting=false` with
+`reason="capacity_hook_error"`; it never fails the request.
+
+The response aggregates across models. Top-level `accepting` is the AND over **critical**
+models, so an unloaded non-critical model does not mark the pod unavailable. Top-level
+`remaining_requests` is the minimum across accepting models — the bottleneck — and is `0`
+whenever `accepting` is false, so the two can never disagree. Per-model slot counts stay
+visible in `models` regardless. Querying
+`/capacity` never triggers a lazy model load; an unloaded model reports
+`reason="model_not_loaded"`.
+
+```json
+{
+  "accepting": true,
+  "remaining_requests": 2,
+  "models": {
+    "doc-type@2.1.0": {
+      "accepting": true,
+      "remaining_requests": 2,
+      "ideal_batch_size": 16,
+      "max_batch_size": 32,
+      "reason": null
+    }
+  },
+  "inflight_requests": 0,
+  "uptime_seconds": 128.4
+}
 ```
 
 ## Configuration

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-20
+
+### Added
+
+- `GET /capacity` endpoint reporting, per model, how many more requests the deployment
+  will accept and its ideal batch size. Requires authentication. Aggregates to a
+  top-level `accepting` (AND over critical models) and `remaining_requests` (the
+  minimum across accepting models, forced to 0 whenever `accepting` is false). Querying
+  it never triggers a lazy model load.
+- `max_batch_size`, `ideal_batch_size`, and `max_concurrent_requests` parameters on the
+  `@app.model()` decorator, stored on `ModelSpec`. All default conservatively to 1 and
+  are validated at import time — `ideal_batch_size` must fall within
+  `[1, max_batch_size]`, and both limits must be at least 1.
+- Optional `capacity()` hook on model classes, overriding the static numbers when the
+  model is loaded. A hook that raises or returns an unparseable value is reported as
+  `accepting=false` with `reason="capacity_hook_error"` rather than failing the request.
+- `thalamus_inflight_requests` gauge tracking `/predict` calls currently in flight.
+- `ModelCapacity` and `CapacityResponse` exported from the package root.
+
 ## [0.2.0] - 2026-01-14
 
 ### Changed
@@ -67,6 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - API key required for protected endpoints
 - Configurable via `THALAMUS_API_KEY` environment variable
 
-[Unreleased]: https://github.com/brick-so/thalamus-serve/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/brick-so/thalamus-serve/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/brick-so/thalamus-serve/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/brick-so/thalamus-serve/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/brick-so/thalamus-serve/releases/tag/v0.1.0
