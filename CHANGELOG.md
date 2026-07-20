@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   credentials and access is controlled by AWS IAM.
 - Malformed or schema-invalid request bodies return `400`; SageMaker interprets `500` as
   a ModelError. Model failures return `500` with a generic message, details logged only.
+- A model returning no output for a single input violates the contract and returns a
+  logged `500` under both envelopes, rather than a raw error or a silent empty list.
 
 ## [0.3.0] - 2026-07-20
 

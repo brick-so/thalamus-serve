@@ -261,6 +261,7 @@ single-model image.
 | Response shape | Bare `Output` by default; `envelope="predict_response"` wraps it in `PredictResponse` |
 | Bad input | `400` for malformed JSON or schema violations — SageMaker reads `500` as a ModelError |
 | Model failure | `500` with a generic message; details go to the log, never the response |
+| Empty output | `500` — returning no output for one input violates the contract |
 | Auth | **None.** SageMaker sends no credentials; access is controlled by AWS IAM |
 
 Two details are load-bearing and covered by regression tests, because both have bitten

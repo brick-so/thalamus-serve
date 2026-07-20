@@ -65,6 +65,10 @@ def build_sagemaker_app(spec: ModelSpec, envelope: Envelope = "bare") -> FastAPI
         start = time.perf_counter()
         try:
             outputs = await asyncio.to_thread(_run_pipeline, spec, parsed)
+            if not outputs:
+                raise ValueError(
+                    f"{spec.id} returned no outputs for a single input"
+                )
         except Exception:
             log.exception("invocations_error", model=spec.id, version=spec.version)
             return JSONResponse(

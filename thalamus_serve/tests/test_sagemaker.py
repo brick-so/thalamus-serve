@@ -38,6 +38,15 @@ class StubModel:
         return [SmOutput(doubled=i.value * 2) for i in inputs]
 
 
+class EmptyModel:
+    @property
+    def is_ready(self) -> bool:
+        return True
+
+    def predict(self, inputs: list[SmInput]) -> list[SmOutput]:
+        return []
+
+
 def _spec(instance: object, **kwargs: object) -> ModelSpec:
     spec = ModelSpec(
         model_id="stub",
@@ -136,6 +145,18 @@ class TestInvocations:
         r = _client(Exploding()).post("/invocations", json={"value": 1})
         assert r.status_code == 500
         assert "cuda oom" not in r.text
+
+    def test_empty_output_is_a_controlled_500(self) -> None:
+        """A single-in/single-out contract violation must not surface as a raw
+        Starlette 500, nor as a silent 200 with an empty list."""
+        for envelope in ("bare", "predict_response"):
+            client = TestClient(
+                build_sagemaker_app(_spec(EmptyModel()), envelope=envelope),
+                raise_server_exceptions=False,
+            )
+            r = client.post("/invocations", json={"value": 1})
+            assert r.status_code == 500, envelope
+            assert r.json() == {"error": "Internal Server Error"}, envelope
 
     def test_runs_preprocess_and_postprocess_hooks(self) -> None:
         class Hooked:
