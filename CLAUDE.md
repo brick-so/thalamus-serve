@@ -40,6 +40,7 @@ uv run uvicorn examples.vanilla.vanilla:app --host 0.0.0.0 --port 8000
 - **Routes** (`core/routes.py`): FastAPI router with endpoints:
   - `/health`, `/ready`, `/status` - Health checks (public)
   - `/metrics` - Prometheus metrics (public)
+  - `/capacity` - Remaining request slots and ideal batch size (requires auth)
   - `/schema`, `/schema/{model_id}` - Model schemas (requires auth)
   - `/predict` - Batch inference (requires auth)
   - `/cache/clear`, `/models/{model_id}/unload` - Management (requires auth)
@@ -86,7 +87,16 @@ class MyModel:
     def is_ready(self) -> bool:
         """Optional. Used by /ready endpoint."""
         return True
+
+    def capacity(self) -> ModelCapacity:
+        """Optional. Overrides the decorator's static batch/concurrency numbers
+        on /capacity. Must be O(1) - it is polled before every dispatch."""
+        ...
 ```
+
+Batch and concurrency limits are declared on `@app.model()` via `max_batch_size`,
+`ideal_batch_size`, and `max_concurrent_requests`. They default to 1 and are
+validated at import time.
 
 ## Schemas
 
