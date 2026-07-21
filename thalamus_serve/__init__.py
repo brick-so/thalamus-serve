@@ -30,6 +30,7 @@ from thalamus_serve.infra.cache import CacheStats, WeightCache
 from thalamus_serve.infra.gpu import (
     DeviceInfo,
     DeviceType,
+    GPURequirementError,
     GPUStatus,
     detect_devices,
     get_optimal_device,
@@ -100,6 +101,7 @@ __all__ = [
     "DeviceType",
     "DeviceInfo",
     "GPUStatus",
+    "GPURequirementError",
     "detect_devices",
     "get_gpu_memory",
     "clear_gpu_cache",

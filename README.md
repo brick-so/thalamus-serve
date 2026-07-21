@@ -221,6 +221,38 @@ visible in `models` regardless. Querying
 }
 ```
 
+## Device Placement
+
+`device` is a *preference*. When the requested accelerator is missing, the allocator
+falls back to CPU and the model serves anyway — fine for a laptop, dangerous for a
+production pod that silently starts answering 100x slower. Set `require_gpu=True` to
+turn that fallback into a startup failure:
+
+```python
+@app.model(
+    model_id="doc-type",
+    input_type=Input,
+    output_type=Output,
+    device="cuda",
+    require_gpu=True,
+)
+class DocTypeClassifier:
+    ...
+```
+
+The check runs during application startup, before any weights are fetched, and covers
+lazily loaded models too — a pod that cannot honour the requirement never reaches a
+listening state. When it fails, startup raises `GPURequirementError`:
+
+```
+GPURequirementError: doc-type@1.0.0 requires a GPU but no CUDA or MPS device was detected
+```
+
+`require_gpu=True` combined with `device="cpu"` is a contradiction and raises
+`ValueError` at import time. Placement is re-checked after allocation, so an explicit
+`device="cuda:3"` on a two-GPU host fails loudly instead of handing an invalid device
+string to `load()`.
+
 ## Configuration
 
 ### Weight Sources

@@ -7,6 +7,10 @@ from typing import Any
 from pydantic import BaseModel
 
 
+class GPURequirementError(RuntimeError):
+    """Raised when a model declaring require_gpu=True cannot be placed on a GPU."""
+
+
 class DeviceType(Enum):
     """Supported compute device types."""
     CPU = "cpu"
@@ -152,6 +156,62 @@ def clear_cache(device: str | None = None) -> None:
     import gc
 
     gc.collect()
+
+
+def is_accelerator(device: str) -> bool:
+    """Check whether a device string names an accelerator torch can actually use.
+
+    Args:
+        device: Device string (e.g., "cuda:0", "mps", "cpu").
+
+    Returns:
+        True only if torch is installed and reports the device as available.
+        A CUDA index beyond the visible device count returns False.
+    """
+    torch = _get_torch()
+    if torch is None or device == "cpu":
+        return False
+
+    try:
+        if device == "mps":
+            return bool(torch.backends.mps.is_available())
+
+        if device.startswith("cuda"):
+            if not torch.cuda.is_available():
+                return False
+            idx = int(device.split(":")[1]) if ":" in device else 0
+            return bool(idx < torch.cuda.device_count())
+    except Exception:
+        return False
+
+    return False
+
+
+def gpu_preference_error(preference: str) -> str | None:
+    """Check whether a device preference can be served by an accelerator.
+
+    Args:
+        preference: Device preference ("auto", "cpu", "cuda", "cuda:0", "mps").
+
+    Returns:
+        None if the preference resolves to a usable accelerator, otherwise a
+        human-readable reason why it cannot.
+    """
+    if preference == "cpu":
+        return 'device is pinned to "cpu"'
+
+    if _get_torch() is None:
+        return "PyTorch is not installed"
+
+    if preference in ("auto", "cuda"):
+        if not detect_devices().available:
+            return "no CUDA or MPS device was detected"
+        return None
+
+    if is_accelerator(preference):
+        return None
+
+    return f"{preference} is not available on this host"
 
 
 def get_optimal_device() -> str:

@@ -27,6 +27,7 @@ class ModelSpec:
         is_critical: bool = True,
         weights: dict[str, WeightSource] | None = None,
         device_preference: str = "auto",
+        require_gpu: bool = False,
         max_batch_size: int = 1,
         ideal_batch_size: int | None = None,
         max_concurrent_requests: int = 1,
@@ -40,6 +41,10 @@ class ModelSpec:
             raise ValueError(
                 f"{model_id}: max_concurrent_requests must be >= 1, "
                 f"got {max_concurrent_requests}"
+            )
+        if require_gpu and device_preference == "cpu":
+            raise ValueError(
+                f'{model_id}: require_gpu=True is incompatible with device="cpu"'
             )
         resolved_ideal = (
             max_batch_size if ideal_batch_size is None else ideal_batch_size
@@ -63,6 +68,7 @@ class ModelSpec:
         self.is_critical = is_critical
         self.weights = weights or {}
         self.device_preference = device_preference
+        self.require_gpu = require_gpu
         self.max_batch_size = max_batch_size
         self.ideal_batch_size = resolved_ideal
         self.max_concurrent_requests = max_concurrent_requests
@@ -82,6 +88,7 @@ class ModelSpec:
         critical: bool,
         weights: dict[str, WeightSource] | None,
         device: str,
+        require_gpu: bool,
         input_type: type[BaseModel],
         output_type: type[BaseModel],
         max_batch_size: int = 1,
@@ -100,6 +107,7 @@ class ModelSpec:
             critical: Whether this model is critical for readiness.
             weights: Weight source configurations.
             device: Device preference.
+            require_gpu: If True, refuse to load the model on CPU.
             input_type: Pydantic model for input validation (required).
             output_type: Pydantic model for output serialization (required).
             max_batch_size: Hard cap on inputs accepted in one /predict call.
@@ -110,7 +118,8 @@ class ModelSpec:
             A configured ModelSpec instance.
 
         Raises:
-            ValueError: If the batch or concurrency bounds are inconsistent.
+            ValueError: If the batch or concurrency bounds are inconsistent, or if
+                require_gpu is combined with device="cpu".
         """
         mid = model_id or model_cls.__name__
         desc = description or model_cls.__doc__ or ""
@@ -139,6 +148,7 @@ class ModelSpec:
             is_critical=critical,
             weights=weights,
             device_preference=device,
+            require_gpu=require_gpu,
             max_batch_size=max_batch_size,
             ideal_batch_size=ideal_batch_size,
             max_concurrent_requests=max_concurrent_requests,

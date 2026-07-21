@@ -94,6 +94,10 @@ class MyModel:
         ...
 ```
 
+`device` on `@app.model()` is only a preference — an unavailable accelerator falls back
+to CPU. Pass `require_gpu=True` to make that fallback fail startup with
+`GPURequirementError` instead (checked before weights are fetched, lazy models included).
+
 Batch and concurrency limits are declared on `@app.model()` via `max_batch_size`,
 `ideal_batch_size`, and `max_concurrent_requests`. They default to 1 and are
 validated at import time.
