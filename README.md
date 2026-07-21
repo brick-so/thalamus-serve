@@ -18,6 +18,7 @@ A Python ML model serving framework built on FastAPI with built-in observability
 - **Batch Processing** - Native batch inference support
 - **Health Checks** - `/health`, `/ready`, `/status` endpoints
 - **Capacity Reporting** - `/capacity` advertises free slots and ideal batch size
+- **SageMaker BYOC** - `sagemaker_app()` serves `/ping` + `/invocations` on port 8080
 - **API Key Authentication** - Protect endpoints with API key middleware
 
 ## Installation
@@ -220,6 +221,60 @@ visible in `models` regardless. Querying
   "uptime_seconds": 128.4
 }
 ```
+
+## SageMaker (BYOC)
+
+AWS SageMaker hosting requires a container that answers `GET /ping` and
+`POST /invocations` on port 8080 — a different contract from `/predict`. `sagemaker_app()`
+builds that app from a model you have already registered, reusing the same weights,
+device allocation and hooks:
+
+```python
+# src/main.py
+app = Thalamus()
+
+@app.model(
+    model_id="image-classifier", default=True, device="cuda",
+    input_type=Input, output_type=Output,
+    weights={"checkpoint": S3Weight(bucket="...", key="...")},
+)
+class ImageClassifier: ...
+
+def create_app():
+    return app.sagemaker_app()
+```
+
+```dockerfile
+ENTRYPOINT ["uvicorn", "src.main:create_app", "--factory", \
+            "--host", "0.0.0.0", "--port", "8080"]
+```
+
+SageMaker endpoints serve one model, so `sagemaker_app()` resolves the registered default
+(or an explicit `model_id=` / `version=`) and loads **only** that model — siblings
+registered on the same app are left untouched, so a multi-model app can ship a
+single-model image.
+
+| Behavior | Detail |
+|----------|--------|
+| `GET /ping` | `200` once the model reports ready, else `503` |
+| `POST /invocations` | One `Input` in, one `Output` out |
+| Response shape | Bare `Output` by default; `envelope="predict_response"` wraps it in `PredictResponse` |
+| Bad input | `400` for malformed JSON or schema violations — SageMaker reads `500` as a ModelError |
+| Model failure | `500` with a generic message; details go to the log, never the response |
+| Empty output | `500` — returning no output for one input violates the contract |
+| Auth | **None.** SageMaker sends no credentials; access is controlled by AWS IAM |
+
+Two details are load-bearing and covered by regression tests, because both have bitten
+this contract before:
+
+- `is_ready` is read as a **property**, never called. Invoking it as `is_ready()` raises
+  `TypeError: 'bool' object is not callable`, so the container never goes healthy.
+- `predict` runs in a worker thread via `asyncio.to_thread`. Calling it inline would block
+  the event loop for the whole inference, so SageMaker's periodic `/ping` goes unanswered
+  and it restarts the container mid-prediction.
+
+Batching and `/capacity` do not apply here: the contract is single-in/single-out, and
+SageMaker does its own request-level scaling.
 
 ## Configuration
 

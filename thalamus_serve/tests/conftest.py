@@ -55,3 +55,8 @@ def client(monkeypatch: pytest.MonkeyPatch) -> Generator[TestClient, None, None]
     monkeypatch.setenv("THALAMUS_API_KEY", TEST_API_KEY)
     with TestClient(app) as c:
         yield c
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    return "asyncio"
