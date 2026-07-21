@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `require_gpu` parameter on the `@app.model()` decorator (defaults to `False`). When set,
+  a model that cannot be placed on a CUDA or MPS device fails application startup with
+  `GPURequirementError` instead of silently falling back to CPU. The check runs before any
+  weight is fetched and covers lazily loaded models, so an under-provisioned pod never
+  reaches a listening state. Combining `require_gpu=True` with `device="cpu"` raises
+  `ValueError` at import time.
+- `GPURequirementError`, `is_accelerator()`, and `gpu_preference_error()` in
+  `thalamus_serve.infra.gpu`. `is_accelerator()` validates a resolved device string against
+  what torch actually reports, including CUDA indices beyond the visible device count.
+
 ## [0.3.0] - 2026-07-20
 
 ### Added

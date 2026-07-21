@@ -15,7 +15,8 @@ from thalamus_serve.config import WeightSource
 from thalamus_serve.core.middleware import APIKeyAuth
 from thalamus_serve.core.model import ModelRegistry, ModelSpec
 from thalamus_serve.core.routes import RouteContext, create_routes
-from thalamus_serve.infra.gpu import GPUAllocator
+from thalamus_serve.infra import gpu
+from thalamus_serve.infra.gpu import GPUAllocator, GPURequirementError
 from thalamus_serve.observability.logging import log
 from thalamus_serve.observability.logging import setup as setup_logging
 from thalamus_serve.observability.metrics import MODEL_INFO
@@ -89,6 +90,7 @@ class Thalamus:
         critical: bool = True,
         weights: dict[str, WeightSource] | None = None,
         device: str = "auto",
+        require_gpu: bool = False,
         input_type: type,
         output_type: type,
         max_batch_size: int = 1,
@@ -117,6 +119,10 @@ class Thalamus:
                 (S3Weight, HFWeight, or HTTPWeight). These are fetched and passed
                 to the model's load() method.
             device: Device preference ("auto", "cpu", "cuda", "cuda:0", "mps").
+                Unavailable accelerators silently fall back to CPU unless
+                require_gpu is set.
+            require_gpu: If True, the model must land on a CUDA or MPS device.
+                Startup fails instead of quietly serving the model from CPU.
             input_type: Pydantic model for input validation (required).
             output_type: Pydantic model for output serialization (required).
             max_batch_size: Hard cap on inputs accepted in one /predict call.
@@ -127,7 +133,8 @@ class Thalamus:
             Decorator function that registers the class and returns it unchanged.
 
         Raises:
-            ValueError: If the batch or concurrency bounds are inconsistent.
+            ValueError: If the batch or concurrency bounds are inconsistent, or if
+                require_gpu is combined with device="cpu".
         """
 
         def decorator(cls: type) -> type:
@@ -141,6 +148,7 @@ class Thalamus:
                 critical,
                 weights,
                 device,
+                require_gpu,
                 input_type,
                 output_type,
                 max_batch_size,
@@ -165,6 +173,12 @@ class Thalamus:
             weights[weight_name] = local_path
 
         device = GPUAllocator.get().allocate(spec.device_preference)
+        if spec.require_gpu and not gpu.is_accelerator(device):
+            GPUAllocator.get().release(device)
+            raise GPURequirementError(
+                f"{spec.id}@{spec.version} requires a GPU but was allocated "
+                f'"{device}" (device preference: "{spec.device_preference}")'
+            )
         spec.device = device
 
         spec.instance = spec.cls()
@@ -180,6 +194,31 @@ class Thalamus:
             ms=round(ms, 2),
         )
         MODEL_INFO.info({"model_id": spec.id, "version": spec.version})
+
+    def _check_gpu_requirements(self) -> None:
+        """Fail startup if any require_gpu model has no accelerator to land on.
+
+        Runs before any weight is fetched, and covers lazily loaded models too.
+
+        Raises:
+            GPURequirementError: If a require_gpu model cannot be placed on a GPU.
+        """
+        for spec in self._registry.all():
+            if not spec.require_gpu:
+                continue
+            reason = gpu.gpu_preference_error(spec.device_preference)
+            if reason is None:
+                continue
+            log.error(
+                "gpu_requirement_unmet",
+                model=spec.id,
+                version=spec.version,
+                device=spec.device_preference,
+                reason=reason,
+            )
+            raise GPURequirementError(
+                f"{spec.id}@{spec.version} requires a GPU but {reason}"
+            )
 
     def _ensure_loaded(self, spec: ModelSpec) -> None:
         if spec.instance is not None:
@@ -202,6 +241,7 @@ class Thalamus:
 
         @asynccontextmanager
         async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+            self._check_gpu_requirements()
             if not self._lazy_load:
                 for m in self._registry.all():
                     self._load_model(m)
